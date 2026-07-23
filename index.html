@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ビニールハウス内カメラ保冷BOX 監視ダッシュボード</title>
+    <!-- Chart.js（グラフ描画ライブラリ） -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { text-align: center; color: #2c3e50; font-size: 24px; margin-bottom: 20px; }
+        .card { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .status-box { background: #eef2f5; border-radius: 8px; padding: 15px; text-align: center; }
+        .status-title { font-size: 12px; color: #7f8c8d; text-transform: uppercase; margin-bottom: 5px; }
+        .status-value { font-size: 28px; font-weight: bold; color: #2c3e50; }
+        .unit { font-size: 16px; font-weight: normal; }
+        .chart-container { position: relative; height: 300px; width: 100%; }
+        button { width: 100%; background: #3498db; color: white; border: none; padding: 12px; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+        button:hover { background: #2980b9; }
+        button:disabled { background: #bdc3c7; cursor: not-allowed; }
+        #ai-result { margin-top: 15px; line-height: 1.6; white-space: pre-wrap; background: #f8f9fa; border-left: 4px solid #3498db; padding: 15px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>📷 保冷BOX・電源ステータス監視</h1>
+
+    <!-- リアルタイム数値表示 -->
+    <div class="status-grid">
+        <div class="status-box">
+            <div class="status-title">現在のBOX内温度</div>
+            <div class="status-value" id="latest-temp">-- <span class="unit">°C</span></div>
+        </div>
+        <div class="status-box">
+            <div class="status-title">バッテリー電圧 (VSYS)</div>
+            <div class="status-value" id="latest-volts">-- <span class="unit">V</span></div>
+        </div>
+        <div class="status-box">
+            <div class="status-title">最新データ受信</div>
+            <div class="status-value" id="latest-time" style="font-size: 18px; margin-top: 8px;">--:--</div>
+        </div>
+    </div>
+
+    <!-- グラフ描画エリア -->
+    <div class="card">
+        <h3>📈 温度・電圧推移 (過去データ)</h3>
+        <div class="chart-container">
+            <canvas id="myChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Gemini AI 分析エリア -->
+    <div class="card">
+        <h3>🤖 Gemini AI 状況分析 & 保冷剤/バッテリー交換予測</h3>
+        <button id="ai-btn" onclick="analyzeWithGemini()">AIでメンテナンス時期を分析・予測する</button>
+        <div id="ai-result">ボタンを押すと、最新データをもとにAIが分析を開始します...</div>
+    </div>
+</div>
+
+<script>
+// --- 設定情報 ---
+const AMBIENT_CHANNEL_ID = "102675";
+const GEMINI_API_KEY = "AIzaSyBJ4Sja7efVkVqnAR50zQ-zpv0S1fvZAQ8";
+
+let chartData = [];
+let myChart = null;
+
+// 画面読み込み時にデータ取得
+window.onload = function() {
+    fetchAmbientData();
+    setInterval(fetchAmbientData, 60000); // 1分ごとに自動更新
+};
+
+// Ambientからデータ取得
+async function fetchAmbientData() {
+    const url = `https://ambidata.io/api/v2/channels/${AMBIENT_CHANNEL_ID}/data?n=24`;
+    try {
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (data.length === 0) return;
+
+        chartData = data.reverse(); // 時系列に並び替え
+        
+        // 最新値の更新
+        const latest = chartData[chartData.length - 1];
+        document.getElementById("latest-temp").innerText = latest.d1 ?? "--";
+        document.getElementById("latest-volts").innerText = latest.d2 ?? "--";
+        const dateObj = new Date(latest.created);
+        document.getElementById("latest-time").innerText = dateObj.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+
+        // 危険判定（30℃超えで赤字強調）
+        if (latest.d1 >= 30) {
+            document.getElementById("latest-temp").style.color = "#e74c3c";
+        } else {
+            document.getElementById("latest-temp").style.color = "#2c3e50";
+        }
+
+        renderChart(chartData);
+    } catch (e) {
+        console.error("Ambientデータ取得エラー:", e);
+    }
+}
+
+// グラフ描画
+function renderChart(data) {
+    const labels = data.map(d => new Date(d.created).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }));
+    const temps = data.map(d => d.d1);
+    const volts = data.map(d => d.d2);
+
+    const ctx = document.getElementById('myChart').getContext('2d');
+    
+    if (myChart) myChart.destroy();
+
+    myChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: '温度 (°C)',
+                    data: temps,
+                    borderColor: '#e74c3c',
+                    backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                    yAxisID: 'y1',
+                    tension: 0.3
+                },
+                {
+                    label: '電圧 (V)',
+                    data: volts,
+                    borderColor: '#3498db',
+                    backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                    yAxisID: 'y2',
+                    tension: 0.3
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y1: { type: 'linear', position: 'left', title: { display: true, text: '温度 (°C)' } },
+                y2: { type: 'linear', position: 'right', title: { display: true, text: '電圧 (V)' }, grid: { drawOnChartArea: false } }
+            }
+        }
+    });
+}
+
+// Gemini API 呼び出し
+async function analyzeWithGemini() {
+    const btn = document.getElementById("ai-btn");
+    const resultDiv = document.getElementById("ai-result");
+    
+    if (chartData.length === 0) {
+        resultDiv.innerText = "データがまだ取得できていません。少し待ってから再試行してください。";
+        return;
+    }
+
+    btn.disabled = true;
+    resultDiv.innerText = "🧠 Gemini AIが分析中...";
+
+    // AIに渡すプロンプトとデータの作成
+    const dataSummary = chartData.map(d => `[${new Date(d.created).toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'})}] 温度:${d.d1}℃, 電圧:${d.d2}V, イベント:${d.d3}`).join("\n");
+
+    const promptText = `
+あなたはビニールハウス内に設置されたカメラ機器用クーラーボックスの自動監視AIです。
+以下の過去データをもとに、現在の状況診断と今後のメンテナンス提案を行ってください。
+
+【必須条件】
+・カメラ等の精密機器を守るため、クーラーボックス内は「30℃未満」を保つ必要があります。
+・夜間や早朝（21:00〜06:00）の現場作業は避けられるように考慮してください。
+
+【過去データ (直近)】
+${dataSummary}
+
+【回答フォーマット】
+1. 状況診断（現在の温度・バッテリー状態の評価）
+2. 保冷剤の交換予測（30℃を超える前、かつ夜間・早朝を避けた推奨交換時刻）
+3. バッテリーの交換予測（現在の電圧傾向から見た推奨交換タイミング）
+4. 作業者へのアドバイス・注意点
+`;
+
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+    try {
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: promptText }] }]
+            })
+        });
+
+        const resData = await response.json();
+        
+        if (resData.candidates && resData.candidates[0].content.parts[0].text) {
+            resultDiv.innerText = resData.candidates[0].content.parts[0].text;
+        } else {
+            resultDiv.innerText = "AIからの回答を取得できませんでした。APIキーの設定を確認してください。";
+        }
+    } catch (e) {
+        console.error("Gemini API エラー:", e);
+        resultDiv.innerText = "通信エラーが発生しました: " + e.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+</script>
+
+</body>
+</html>
