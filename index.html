@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ビニールハウス内カメラ保冷BOX 監視ダッシュボード</title>
-    <!-- Chart.js（グラフ描画ライブラリ） -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px; color: #333; }
@@ -21,12 +20,25 @@
         button:hover { background: #2980b9; }
         button:disabled { background: #bdc3c7; cursor: not-allowed; }
         #ai-result { margin-top: 15px; line-height: 1.6; white-space: pre-wrap; background: #f8f9fa; border-left: 4px solid #3498db; padding: 15px; border-radius: 4px; }
+        .key-input-container { display: flex; gap: 10px; margin-bottom: 10px; }
+        .key-input-container input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+        .key-input-container button { width: auto; padding: 10px 20px; }
     </style>
 </head>
 <body>
 
 <div class="container">
     <h1>📷 保冷BOX・電源ステータス監視</h1>
+
+    <!-- APIキー設定エリア -->
+    <div class="card">
+        <div class="status-title">🔑 Gemini APIキー設定（初回のみ）</div>
+        <div class="key-input-container">
+            <input type="password" id="api-key-input" placeholder="AIzaSy... から始まるAPIキーを入力">
+            <button onclick="saveApiKey()">保存</button>
+        </div>
+        <div id="key-status-msg" style="font-size: 12px; color: #27ae60;"></div>
+    </div>
 
     <!-- リアルタイム数値表示 -->
     <div class="status-grid">
@@ -61,18 +73,34 @@
 </div>
 
 <script>
-// --- 設定情報 ---
 const AMBIENT_CHANNEL_ID = "102675";
-const GEMINI_API_KEY = "AIzaSyBJ4Sja7efVkVqnAR50zQ-zpv0S1fvZAQ8";
-
 let chartData = [];
 let myChart = null;
 
-// 画面読み込み時にデータ取得
+// 画面読み込み時
 window.onload = function() {
+    // 保存済みAPIキーの読み込み
+    const savedKey = localStorage.getItem("GEMINI_API_KEY");
+    if (savedKey) {
+        document.getElementById("api-key-input").value = savedKey;
+        document.getElementById("key-status-msg").innerText = "✅ APIキーが保存されています";
+    }
+
     fetchAmbientData();
-    setInterval(fetchAmbientData, 60000); // 1分ごとに自動更新
+    setInterval(fetchAmbientData, 60000);
 };
+
+// APIキーの保存
+function saveApiKey() {
+    const key = document.getElementById("api-key-input").value.trim();
+    if (key) {
+        localStorage.setItem("GEMINI_API_KEY", key);
+        document.getElementById("key-status-msg").innerText = "✅ APIキーをブラウザに保存しました！";
+    } else {
+        localStorage.removeItem("GEMINI_API_KEY");
+        document.getElementById("key-status-msg").innerText = "⚠️ キーを削除しました";
+    }
+}
 
 // Ambientからデータ取得
 async function fetchAmbientData() {
@@ -83,16 +111,14 @@ async function fetchAmbientData() {
         
         if (data.length === 0) return;
 
-        chartData = data.reverse(); // 時系列に並び替え
+        chartData = data.reverse();
         
-        // 最新値の更新
         const latest = chartData[chartData.length - 1];
         document.getElementById("latest-temp").innerText = latest.d1 ?? "--";
         document.getElementById("latest-volts").innerText = latest.d2 ?? "--";
         const dateObj = new Date(latest.created);
         document.getElementById("latest-time").innerText = dateObj.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
 
-        // 危険判定（30℃超えで赤字強調）
         if (latest.d1 >= 30) {
             document.getElementById("latest-temp").style.color = "#e74c3c";
         } else {
@@ -153,6 +179,12 @@ function renderChart(data) {
 async function analyzeWithGemini() {
     const btn = document.getElementById("ai-btn");
     const resultDiv = document.getElementById("ai-result");
+    const apiKey = localStorage.getItem("GEMINI_API_KEY") || document.getElementById("api-key-input").value.trim();
+
+    if (!apiKey) {
+        alert("Gemini APIキーを入力して保存してください。");
+        return;
+    }
     
     if (chartData.length === 0) {
         resultDiv.innerText = "データがまだ取得できていません。少し待ってから再試行してください。";
@@ -162,7 +194,6 @@ async function analyzeWithGemini() {
     btn.disabled = true;
     resultDiv.innerText = "🧠 Gemini AIが分析中...";
 
-    // AIに渡すプロンプトとデータの作成
     const dataSummary = chartData.map(d => `[${new Date(d.created).toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'})}] 温度:${d.d1}℃, 電圧:${d.d2}V, イベント:${d.d3}`).join("\n");
 
     const promptText = `
@@ -183,7 +214,7 @@ ${dataSummary}
 4. 作業者へのアドバイス・注意点
 `;
 
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
     try {
         const response = await fetch(endpoint, {
@@ -199,7 +230,7 @@ ${dataSummary}
         if (resData.candidates && resData.candidates[0].content.parts[0].text) {
             resultDiv.innerText = resData.candidates[0].content.parts[0].text;
         } else {
-            resultDiv.innerText = "AIからの回答を取得できませんでした。APIキーの設定を確認してください。";
+            resultDiv.innerText = "AIからの回答を取得できませんでした。APIキーが正しいか確認してください。";
         }
     } catch (e) {
         console.error("Gemini API エラー:", e);
