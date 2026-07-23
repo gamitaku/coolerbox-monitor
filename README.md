@@ -1,0 +1,2 @@
+# coolerbox-monitor
+クーラーBOXのモニタリングをしています。
