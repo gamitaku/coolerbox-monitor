@@ -166,13 +166,14 @@
   // ログ出力用関数
   function writeLog(msg) {
     const logBox = document.getElementById('system-log');
+    if (!logBox) return;
     const now = new Date().toLocaleTimeString('ja-JP');
     logBox.innerText += `[${now}] ${msg}\n`;
     logBox.scrollTop = logBox.scrollHeight;
   }
 
   // --------------------------------------------------
-  // 1. Ambient API からデータ取得 (JSONP対応)
+  // 1. Ambient API からデータ取得 (最新要素を正しく取得)
   // --------------------------------------------------
   function fetchAmbientData() {
     const oldScript = document.getElementById('ambient-jsonp');
@@ -180,22 +181,28 @@
 
     window.ambientCallback = function(data) {
       if (data && data.length > 0) {
-        const latest = data[0];
-        const temp = latest.d1 !== undefined ? latest.d1 : 0;
-        const volts = latest.d2 !== undefined ? latest.d2 : 0;
-        const rssi = latest.d3 !== undefined ? latest.d3 : -99;
+        // 配列の最後（data.length - 1）が最新データ
+        const latest = data[data.length - 1];
+        
+        const temp = latest.d1 !== undefined ? parseFloat(latest.d1).toFixed(1) : 0;
+        const volts = latest.d2 !== undefined ? parseFloat(latest.d2).toFixed(2) : 0;
+        const rssi = latest.d3 !== undefined ? parseInt(latest.d3) : -99;
         
         currentTemp = temp;
         const dateObj = new Date(latest.created);
-        const lastTime = dateObj.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+        const lastTime = dateObj.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
         updateDashboardUI(temp, volts, rssi, lastTime);
+        writeLog(`[Ambient] データ取得成功: ${temp}℃ / ${volts}V / ${rssi}dBm (${lastTime})`);
+      } else {
+        writeLog("[Ambient] ⚠️ データが空で返却されました。");
       }
     };
 
     const script = document.createElement('script');
     script.id = 'ambient-jsonp';
-    script.src = `https://ambidata.io/api/v2/channels/${AMBIENT_CHANNEL_ID}/data?n=1&callback=ambientCallback`;
+    // n=5 で直近データ群を取得して最後の要素を参照
+    script.src = `https://ambidata.io/api/v2/channels/${AMBIENT_CHANNEL_ID}/data?n=5&callback=ambientCallback`;
     document.body.appendChild(script);
   }
 
@@ -264,7 +271,7 @@
   }
 
   // --------------------------------------------------
-  // 4. AI 分析 & LINE 通知送信 (通信ログ詳細化)
+  // 4. AI 分析 & LINE 通知送信 (CORS対策 mode: "no-cors")
   // --------------------------------------------------
   async function runAiAnalysis() {
     const apiKey = document.getElementById('cfg-api-key').value;
@@ -302,23 +309,17 @@
     writeLog("送信試行中 -> " + webhookUrl);
 
     try {
-      // GASからのエラーテキスト（JSON/Text）を拾うため fetch 実行
-      const res = await fetch(webhookUrl, {
+      // mode: 'no-cors' を追加してブラウザのCORS制限を回避
+      await fetch(webhookUrl, {
         method: "POST",
-        headers: { "Content-Type": "text/plain" }, // CORS制約を緩めるためtext/plain指定
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain" },
         body: JSON.stringify({ message: msg })
       });
       
-      const resText = await res.text();
-      writeLog("受信レスポンス: " + resText);
-
-      if (resText.includes("Success")) {
-        writeLog("✅ LINE送信成功！");
-      } else {
-        writeLog("⚠️ GASからの応答エラー: " + resText);
-      }
+      writeLog("🚀 GASへリクエストを送信しました（LINEアプリの受信をご確認ください）");
     } catch (err) {
-      writeLog("❌ 通信失敗 (ネットワークエラーまたはURL不正): " + err);
+      writeLog("❌ 通信失敗: " + err);
     }
   }
 
