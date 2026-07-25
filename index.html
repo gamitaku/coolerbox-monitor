@@ -45,7 +45,10 @@
     .form-item label { font-size: 0.85rem; font-weight: bold; color: #475569; }
     .form-item input { padding: 8px; border-radius: 6px; border: 1px solid var(--border); font-size: 0.9rem; }
     .btn-save { background: #10b981; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 15px; }
-    .btn-test { background: #06b6d4; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; margin-top: 5px; }
+    .btn-test { background: #06b6d4; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85rem; margin-top: 5px; }
+    
+    /* ログ出力用スタイル */
+    .log-box { background: #0f172a; color: #38bdf8; font-family: monospace; font-size: 0.8rem; padding: 12px; border-radius: 6px; height: 120px; overflow-y: auto; margin-top: 10px; white-space: pre-wrap; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -94,9 +97,9 @@
     </div>
   </div>
 
-  <!-- 3. 設定エリア (最下部・アコーディオン) -->
+  <!-- 3. 設定エリア (折りたたみ) -->
   <div class="card">
-    <details>
+    <details open>
       <summary>⚙️ システム設定・アラート閾値・LINE定時通知設定</summary>
       
       <div class="setting-group">
@@ -113,10 +116,16 @@
           <input type="password" id="cfg-api-key" placeholder="AIキーを入力">
         </div>
         <div class="form-item">
-          <label>LINE/Webhook 通知先URL</label>
-          <input type="text" id="cfg-line-webhook" placeholder=" Make / GAS / Messaging API などのURL">
-          <button class="btn-test" onclick="testLineNotification()">LINE通知テスト送信</button>
+          <label>LINE/Webhook 通知先URL (GAS WebアプリURL)</label>
+          <input type="text" id="cfg-line-webhook" placeholder="https://script.google.com/macros/s/.../exec">
+          <button class="btn-test" onclick="testLineNotification()">🚀 LINE通知テスト送信</button>
         </div>
+      </div>
+
+      <!-- ログコンソール表示エリア -->
+      <div style="margin-top: 15px;">
+        <div style="font-size:0.85rem; font-weight:bold; color:#475569;">📋 システム実行・通信ログ</div>
+        <div class="log-box" id="system-log">[System] ログモニター待機中...\n</div>
       </div>
 
       <hr style="border: 0; border-top: 1px solid var(--border); margin: 20px 0;">
@@ -140,6 +149,11 @@
       <button class="btn-save" onclick="saveSettings()">設定を保存</button>
     </details>
   </div>
+
+  <footer style="text-align: center; margin-top: 10px; padding: 10px 0; font-size: 0.85rem; color: #64748b;">
+    <a href="./privacy.html" style="color: #64748b; margin-right: 15px;">プライバシーポリシー</a>
+    <a href="./terms.html" style="color: #64748b;">利用規約</a>
+  </footer>
 </div>
 
 <script>
@@ -149,8 +163,16 @@
   let predBatTime = "未計算";
   let lastNotifiedMinute = "";
 
+  // ログ出力用関数
+  function writeLog(msg) {
+    const logBox = document.getElementById('system-log');
+    const now = new Date().toLocaleTimeString('ja-JP');
+    logBox.innerText += `[${now}] ${msg}\n`;
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
   // --------------------------------------------------
-  // 1. Ambient API からデータ取得 (JSONPによるCORS回避対応)
+  // 1. Ambient API からデータ取得 (JSONP対応)
   // --------------------------------------------------
   function fetchAmbientData() {
     const oldScript = document.getElementById('ambient-jsonp');
@@ -178,7 +200,7 @@
   }
 
   // --------------------------------------------------
-  // 2. バッテリー計算 & Wi-Fiアイコン処理
+  // 2. バッテリー & UI処理
   // --------------------------------------------------
   function calcBatteryInfo(volts) {
     if (volts <= 0) return { percent: 0, remainHours: "0.0" };
@@ -196,9 +218,6 @@
     return "⚠️ 極弱";
   }
 
-  // --------------------------------------------------
-  // 3. UI更新
-  // --------------------------------------------------
   function updateDashboardUI(temp, volts, rssi, lastTime) {
     const bat = calcBatteryInfo(volts);
     document.getElementById('val-temp').innerText = `${temp} °C`;
@@ -220,7 +239,7 @@
   }
 
   // --------------------------------------------------
-  // 4. 設定読み込み・保存
+  // 3. 設定読み込み・保存
   // --------------------------------------------------
   function loadSettings() {
     document.getElementById('cfg-temp-alert').value = localStorage.getItem('cfg_temp_alert') || "15.0";
@@ -240,11 +259,12 @@
     localStorage.setItem('cfg_time_1', document.getElementById('cfg-time-1').value);
     localStorage.setItem('cfg_time_2', document.getElementById('cfg-time-2').value);
     localStorage.setItem('cfg_time_3', document.getElementById('cfg-time-3').value);
+    writeLog("設定をローカルストレージに保存しました。");
     alert('設定を保存しました！');
   }
 
   // --------------------------------------------------
-  // 5. AI 分析 & LINE 通知処理
+  // 4. AI 分析 & LINE 通知送信 (通信ログ詳細化)
   // --------------------------------------------------
   async function runAiAnalysis() {
     const apiKey = document.getElementById('cfg-api-key').value;
@@ -252,6 +272,7 @@
       alert("最下部の設定エリアで Gemini API キーを設定してください。");
       return;
     }
+    writeLog("Gemini API によるメンテ予測を実行中...");
     document.getElementById('ai-response-text').innerText = "AIが過去の推移データから最適メンテナンス時刻を計算中...";
     setTimeout(() => {
       document.getElementById('ai-response-text').innerText = "【分析完了】現在のペースで消費される場合、本日の夜間帯に保冷剤の冷却能力が低下します。";
@@ -259,6 +280,7 @@
       predBatTime = "翌日 08:00";
       document.getElementById('pred-ice-time').innerText = `本日 ${predIceTime} 頃`;
       document.getElementById('pred-bat-time').innerText = `${predBatTime} 頃`;
+      writeLog("AI予測完了: 保冷剤 21:30 / バッテリー 翌08:00");
     }, 1500);
   }
 
@@ -271,22 +293,38 @@
   }
 
   async function sendLineMessage(msg) {
-    const webhookUrl = document.getElementById('cfg-line-webhook').value;
-    if (!webhookUrl) return;
+    const webhookUrl = document.getElementById('cfg-line-webhook').value.trim();
+    if (!webhookUrl) {
+      writeLog("❌ エラー: Webhook URLが未設定です。");
+      return;
+    }
+
+    writeLog("送信試行中 -> " + webhookUrl);
+
     try {
-      await fetch(webhookUrl, {
+      // GASからのエラーテキスト（JSON/Text）を拾うため fetch 実行
+      const res = await fetch(webhookUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "text/plain" }, // CORS制約を緩めるためtext/plain指定
         body: JSON.stringify({ message: msg })
       });
+      
+      const resText = await res.text();
+      writeLog("受信レスポンス: " + resText);
+
+      if (resText.includes("Success")) {
+        writeLog("✅ LINE送信成功！");
+      } else {
+        writeLog("⚠️ GASからの応答エラー: " + resText);
+      }
     } catch (err) {
-      console.error("LINE送信エラー:", err);
+      writeLog("❌ 通信失敗 (ネットワークエラーまたはURL不正): " + err);
     }
   }
 
   function testLineNotification() {
     const msg = buildLineMessage();
-    alert("以下のメッセージで送信テストを行います:\n\n" + msg);
+    writeLog("テスト送信を開始します...");
     sendLineMessage(msg);
   }
 
@@ -301,6 +339,7 @@
 
     if (currentHHMM === t1 || currentHHMM === t2 || currentHHMM === t3) {
       lastNotifiedMinute = currentHHMM;
+      writeLog(`定時通知時刻 (${currentHHMM}) に到達しました。自動送信を実行します。`);
       sendLineMessage(buildLineMessage());
     }
   }
@@ -308,8 +347,9 @@
   // 初期化実行
   loadSettings();
   fetchAmbientData();
-  setInterval(fetchAmbientData, 30000);        // 30秒ごとにAmbientデータ取得
-  setInterval(checkScheduledNotification, 10000); // 10秒ごとにタイマーチェック
+  writeLog("ダッシュボードを初期化しました。");
+  setInterval(fetchAmbientData, 30000);
+  setInterval(checkScheduledNotification, 10000);
 </script>
 </body>
 </html>
