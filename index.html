@@ -149,11 +149,14 @@
   let predBatTime = "未計算";
   let lastNotifiedMinute = "";
 
-  async function fetchAmbientData() {
-    const url = `https://ambidata.io/api/v2/channels/${AMBIENT_CHANNEL_ID}/data?n=1`;
-    try {
-      const response = await fetch(url);
-      const data = await response.json();
+  // --------------------------------------------------
+  // 1. Ambient API からデータ取得 (JSONPによるCORS回避対応)
+  // --------------------------------------------------
+  function fetchAmbientData() {
+    const oldScript = document.getElementById('ambient-jsonp');
+    if (oldScript) oldScript.remove();
+
+    window.ambientCallback = function(data) {
       if (data && data.length > 0) {
         const latest = data[0];
         const temp = latest.d1 !== undefined ? latest.d1 : 0;
@@ -166,11 +169,17 @@
 
         updateDashboardUI(temp, volts, rssi, lastTime);
       }
-    } catch (error) {
-      console.error("Ambientデータ取得エラー:", error);
-    }
+    };
+
+    const script = document.createElement('script');
+    script.id = 'ambient-jsonp';
+    script.src = `https://ambidata.io/api/v2/channels/${AMBIENT_CHANNEL_ID}/data?n=1&callback=ambientCallback`;
+    document.body.appendChild(script);
   }
 
+  // --------------------------------------------------
+  // 2. バッテリー計算 & Wi-Fiアイコン処理
+  // --------------------------------------------------
   function calcBatteryInfo(volts) {
     if (volts <= 0) return { percent: 0, remainHours: "0.0" };
     let percent = Math.round(((volts - 3.2) / (4.2 - 3.2)) * 100);
@@ -187,6 +196,9 @@
     return "⚠️ 極弱";
   }
 
+  // --------------------------------------------------
+  // 3. UI更新
+  // --------------------------------------------------
   function updateDashboardUI(temp, volts, rssi, lastTime) {
     const bat = calcBatteryInfo(volts);
     document.getElementById('val-temp').innerText = `${temp} °C`;
@@ -207,6 +219,9 @@
     }
   }
 
+  // --------------------------------------------------
+  // 4. 設定読み込み・保存
+  // --------------------------------------------------
   function loadSettings() {
     document.getElementById('cfg-temp-alert').value = localStorage.getItem('cfg_temp_alert') || "15.0";
     document.getElementById('cfg-bat-alert').value = localStorage.getItem('cfg_bat_alert') || "20";
@@ -228,6 +243,9 @@
     alert('設定を保存しました！');
   }
 
+  // --------------------------------------------------
+  // 5. AI 分析 & LINE 通知処理
+  // --------------------------------------------------
   async function runAiAnalysis() {
     const apiKey = document.getElementById('cfg-api-key').value;
     if (!apiKey) {
@@ -287,10 +305,11 @@
     }
   }
 
+  // 初期化実行
   loadSettings();
   fetchAmbientData();
-  setInterval(fetchAmbientData, 30000);
-  setInterval(checkScheduledNotification, 10000);
+  setInterval(fetchAmbientData, 30000);        // 30秒ごとにAmbientデータ取得
+  setInterval(checkScheduledNotification, 10000); // 10秒ごとにタイマーチェック
 </script>
 </body>
 </html>
