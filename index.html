@@ -37,6 +37,7 @@
     .pred-card { background: white; padding: 12px 15px; border-radius: 8px; border-left: 4px solid var(--primary); }
     .pred-card.ice { border-left-color: #3b82f6; }
     .pred-card.bat { border-left-color: #f59e0b; }
+    .pred-card.hot { border-left-color: #ef4444; background: #fff5f5; }
 
     /* 設定エリア (折りたたみ) */
     details summary { font-weight: bold; cursor: pointer; padding: 10px 0; color: #475569; user-select: none; }
@@ -79,13 +80,17 @@
   <div class="card ai-box">
     <div class="ai-header">
       <div style="font-weight:bold; color:#1e40af;">🤖 Gemini AI 状況分析 & メンテナンス推奨時刻</div>
-      <button class="btn-ai" onclick="runAiAnalysis()">AIで次回メンテ時期を予測</button>
+      <button class="btn-ai" onclick="runAiAnalysis()">最新データでAI分析を更新</button>
     </div>
     <div id="ai-response-text" style="font-size:0.9rem; color:#1e293b; line-height:1.5;">
-      ボタンを押すと、現在の温度・電圧推移データからAIが次回交換が必要になる推奨時刻を算出して提示します。
+      データ取得時に、現在の温度・電圧推移からAIが次回交換が必要になる推奨時刻を自動計算して提示します。
     </div>
 
     <div class="prediction-grid">
+      <div class="pred-card hot">
+        <div style="font-size:0.8rem; color:#64748b;">🔥 35度超え予想時刻</div>
+        <div style="font-size:1.2rem; font-weight:bold; color:#dc2626; margin-top:5px;" id="pred-hot-time">未計算</div>
+      </div>
       <div class="pred-card ice">
         <div style="font-size:0.8rem; color:#64748b;">🧊 次回 保冷剤交換 推奨時刻</div>
         <div style="font-size:1.2rem; font-weight:bold; color:#1d4ed8; margin-top:5px;" id="pred-ice-time">未計算</div>
@@ -112,7 +117,7 @@
           <input type="number" id="cfg-bat-alert" value="20" min="5" max="50">
         </div>
         <div class="form-item">
-          <label>Gemini API キー (ブラウザ保存)</label>
+          <label>Gemini API キー (ブラウザ保存・予備)</label>
           <input type="password" id="cfg-api-key" placeholder="AIキーを入力">
         </div>
         <div class="form-item">
@@ -161,6 +166,7 @@
   let currentBatPercent = "--";
   let predIceTime = "まだ未計算だよ";
   let predBatTime = "まだ未計算だよ";
+  let predHotTime = "まだ未計算だよ";
   let lastNotifiedMinute = "";
   let lastAlertTime = 0; // アラート連投防止用タイムスタンプ
 
@@ -201,7 +207,7 @@
       
       const nowTime = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-      // UI更新
+      // UI数値更新
       document.getElementById('val-temp').innerText = `${data.temp} °C`;
       document.getElementById('val-bat').innerText = `${data.batPercent} %`;
       
@@ -211,6 +217,27 @@
       document.getElementById('wifi-icon').innerText = data.wifi.icon;
       document.getElementById('val-last-time').innerText = `最終更新: ${nowTime}`;
 
+      // AI予測データの反映（GAS側から返却される項目に対応）
+      if (data.over35Time) {
+        predHotTime = data.over35Time;
+        document.getElementById('pred-hot-time').innerText = predHotTime;
+      }
+
+      if (data.aiAdvice) {
+        if (data.aiAdvice.ice) {
+          predIceTime = data.aiAdvice.ice;
+          document.getElementById('pred-ice-time').innerText = predIceTime;
+        }
+        if (data.aiAdvice.battery) {
+          predBatTime = data.aiAdvice.battery;
+          document.getElementById('pred-bat-time').innerText = predBatTime;
+        }
+        if (data.aiAdvice.iceStatus) {
+          document.getElementById('ai-response-text').innerText = `【AI診断】🧊保冷剤: ${data.aiAdvice.iceStatus} / 🔋バッテリー: ${data.aiAdvice.batStatus}`;
+        }
+      }
+
+      updateDashboardUI(parseFloat(data.temp), parseFloat(data.volts));
       writeLog(`[Data] 取得成功: 温度 ${data.temp}℃ / 電圧 ${data.volts}V`);
 
       // 閾値チェック
@@ -233,7 +260,7 @@
     return { percent: percent, remainHours: remainHours.toFixed(1) };
   }
 
-  function updateDashboardUI(temp, volts, rssi, lastTime) {
+  function updateDashboardUI(temp, volts) {
     const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
     const statusElem = document.getElementById('status-temp');
     if (temp >= alertTemp) {
@@ -306,21 +333,9 @@
   // 5. AI 分析 & かわいらしいLINEメッセージ作成
   // --------------------------------------------------
   async function runAiAnalysis() {
-    const apiKey = document.getElementById('cfg-api-key').value;
-    if (!apiKey) {
-      alert("最下部の設定エリアで Gemini API キーを設定してください。");
-      return;
-    }
-    writeLog("Gemini API によるメンテ予測を実行中...");
-    document.getElementById('ai-response-text').innerText = "AIが過去の推移データから最適メンテナンス時刻を計算中...";
-    setTimeout(() => {
-      document.getElementById('ai-response-text').innerText = "【分析完了】今のペースだと、今夜には保冷剤のパワーが落ちてきそうだよ！";
-      predIceTime = "本日 21:30";
-      predBatTime = "明日 08:00";
-      document.getElementById('pred-ice-time').innerText = `${predIceTime} 頃`;
-      document.getElementById('pred-bat-time').innerText = `${predBatTime} 頃`;
-      writeLog("AI予測完了: 保冷剤 21:30 / バッテリー 翌08:00");
-    }, 1500);
+    writeLog("最新のGASサーバーデータを再取得してAI分析を反映します...");
+    await fetchAmbientData();
+    alert("最新の予測データを反映しました！");
   }
 
   // 愛嬌たっぷりな定時通知メッセージ
@@ -330,6 +345,7 @@
            `🌡️ BOX内温度：${currentTemp} ℃（ひんやりキープ中！）\n` +
            `🔋 バッテリー：${currentBatPercent} %\n\n` +
            `そろそろ準備しておくと安心なメンテナンス予定だよ👇\n` +
+           `🔥 35度超え予想 ➔ ${predHotTime}\n` +
            `🧊 保冷剤の交換目安 ➔ ${predIceTime}\n` +
            `⚡ バッテリー充電目安 ➔ ${predBatTime}\n\n` +
            `今日も大切なカメラをバッチリ保護するね！よろしくお願いしますカメラ📷✨`;
