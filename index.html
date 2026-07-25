@@ -158,6 +158,8 @@
 
 <script>
   const AMBIENT_CHANNEL_ID = "102675";
+  const AMBIENT_READ_KEY = "db63a7f0c9718b60"; // Ambient Read Key
+
   let currentTemp = "--";
   let currentBatPercent = "--";
   let predIceTime = "まだ未計算だよ";
@@ -175,7 +177,7 @@
   }
 
   // --------------------------------------------------
-  // 1. Ambient API からデータ取得
+  // 1. Ambient API からデータ取得（Read Key付与）
   // --------------------------------------------------
   function fetchAmbientData() {
     const oldScript = document.getElementById('ambient-jsonp');
@@ -205,7 +207,8 @@
 
     const script = document.createElement('script');
     script.id = 'ambient-jsonp';
-    script.src = `https://ambidata.io/api/v2/channels/${AMBIENT_CHANNEL_ID}/data?n=5&callback=ambientCallback`;
+    // URLの末尾に Read Key を連携
+    script.src = `https://ambidata.io/api/v2/channels/${AMBIENT_CHANNEL_ID}/data?n=5&readKey=${AMBIENT_READ_KEY}&callback=ambientCallback`;
     document.body.appendChild(script);
   }
 
