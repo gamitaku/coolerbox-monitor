@@ -1,220 +1,134 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>📷 保冷BOX・電源ステータス監視</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    :root {
-      --bg: #f4f6f9;
-      --card-bg: #ffffff;
-      --text: #333;
-      --primary: #2563eb;
-      --warning: #eab308;
-      --danger: #ef4444;
-      --border: #e2e8f0;
-    }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
-    .container { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
-    .card { background: var(--card-bg); border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid var(--border); }
-    h1 { font-size: 1.5rem; margin: 0 0 10px 0; }
+import machine
+import time
+import network
+import urequests
+
+# ==========================================
+# 1. 接続 & 設定情報
+# ==========================================
+WIFI_SSID = "F660P-zbQH-G"  # 2.4GHz帯SSID
+WIFI_PASS = "kesy4eb7ysyb4"
+
+AMBIENT_CHANNEL_ID = "102675"
+AMBIENT_WRITE_KEY = "408d25019deace59"
+
+SEND_INTERVAL_SEC = 300  # 5分間隔 (300秒)
+
+# ==========================================
+# 2. ハードウェア初期化 (センサー & WDT)
+# ==========================================
+# 内蔵温度センサー (ADC4)
+adc_temp = machine.ADC(4)
+
+# VSYS 電圧測定 (ADC29 / PIN29)
+adc_vsys = machine.ADC(29)
+
+# ウォッチドッグタイマー (上限8秒に設定)
+wdt = machine.WDT(timeout=8000)
+
+# ==========================================
+# 3. 計測用関数
+# ==========================================
+def read_temperature():
+    """内蔵温度センサーから温度(℃)を取得"""
+    adc_value = adc_temp.read_u16()
+    voltage = adc_value * (3.3 / 65535)
+    temperature = 27 - (voltage - 0.706) / 0.001721
+    return round(temperature, 1)
+
+def read_vsys_voltage():
+    """VSYSピンからバッテリー/電源電圧(V)を取得"""
+    adc_value = adc_vsys.read_u16()
+    vsys_voltage = adc_value * (3.3 * 3 / 65535)
+    return round(vsys_voltage, 2)
+
+def get_wifi_rssi():
+    """Wi-Fiの電波強度(RSSI dBm)を取得"""
+    wlan = network.WLAN(network.STA_IF)
+    if wlan.isconnected():
+        try:
+            return wlan.status('rssi')
+        except:
+            return -99
+    return -99
+
+# ==========================================
+# 4. Wi-Fi 接続処理
+# ==========================================
+def connect_wifi():
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(False)  # 一度リセット
+    time.sleep(0.5)
+    wlan.active(True)
     
-    /* ステータスカードグリッド */
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-    .stat-card { background: #f8fafc; border-radius: 8px; padding: 15px; border: 1px solid var(--border); position: relative; }
-    .stat-title { font-size: 0.85rem; color: #64748b; margin-bottom: 5px; }
-    .stat-value { font-size: 1.8rem; font-weight: bold; color: #1e293b; }
-    .stat-sub { font-size: 0.8rem; color: #64748b; margin-top: 4px; }
-    .wifi-icon { font-size: 1.2rem; float: right; }
+    if not wlan.isconnected():
+        print(f"Wi-Fi接続中: {WIFI_SSID}...")
+        wlan.connect(WIFI_SSID, WIFI_PASS)
+        
+        max_wait = 20
+        while max_wait > 0:
+            wdt.feed()
+            if wlan.status() >= 3:
+                break
+            max_wait -= 1
+            time.sleep(1)
+            
+    if wlan.isconnected():
+        print(f"Wi-Fi接続成功! IP: {wlan.ifconfig()[0]}, RSSI: {get_wifi_rssi()} dBm")
+        return True
+    else:
+        print("Wi-Fi接続失敗")
+        return False
 
-    /* AI メンテナンス予測領域 */
-    .ai-box { background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #bfdbfe; }
-    .ai-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
-    .btn-ai { background: var(--primary); color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; }
-    .btn-ai:hover { opacity: 0.9; }
-    .prediction-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px; }
-    .pred-card { background: white; padding: 12px; border-radius: 8px; border-left: 4px solid var(--primary); }
-    .pred-card.ice { border-left-color: #3b82f6; }
-    .pred-card.bat { border-left-color: #f59e0b; }
-
-    /* 設定エリア (折りたたみ) */
-    details summary { font-weight: bold; cursor: pointer; padding: 10px 0; color: #475569; user-select: none; }
-    .setting-group { margin-top: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; }
-    .form-item { display: flex; flex-direction: column; gap: 5px; }
-    .form-item label { font-size: 0.85rem; font-weight: bold; color: #475569; }
-    .form-item input { padding: 8px; border-radius: 6px; border: 1px solid var(--border); }
-    .btn-save { background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 10px; }
-  </style>
-</head>
-<body>
-
-<div class="container">
-  <h1>📷 保冷BOX・電源ステータス監視</h1>
-
-  <!-- 1. リアルタイム・ステータス表示 -->
-  <div class="card grid">
-    <div class="stat-card">
-      <div class="stat-title">現在のBOX内温度</div>
-      <div class="stat-value" id="val-temp">-- °C</div>
-      <div class="stat-sub" id="status-temp">取得中...</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-title">バッテリー残量 / 電圧</div>
-      <div class="stat-value" id="val-bat">-- %</div>
-      <div class="stat-sub" id="val-volts">-- V (推定稼働: --時間)</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-title">Wi-Fi 電波強度 <span class="wifi-icon" id="wifi-icon">📶 --</span></div>
-      <div class="stat-value" id="val-rssi">-- dBm</div>
-      <div class="stat-sub" id="val-last-time">最終更新: --:--</div>
-    </div>
-  </div>
-
-  <!-- 2. AI メンテナンス予測 & 推奨時刻 -->
-  <div class="card ai-box">
-    <div class="ai-header">
-      <div style="font-weight:bold; color:#1e40af;">🤖 Gemini AI 状況分析 & メンテナンス推奨時刻</div>
-      <button class="btn-ai" onclick="runAiAnalysis()">AIで次回メンテ時期を予測</button>
-    </div>
-    <div id="ai-response-text" style="font-size:0.9rem; color:#1e293b; line-height:1.5;">
-      ボタンを押すと、現在の温度・電圧推移データからAIが次回交換が必要になる推奨時刻を算出して提示します。
-    </div>
-
-    <div class="prediction-grid">
-      <div class="pred-card ice">
-        <div style="font-size:0.8rem; color:#64748b;">🧊 次回 保冷剤交換 推奨時刻</div>
-        <div style="font-size:1.2rem; font-weight:bold; color:#1d4ed8; margin-top:5px;" id="pred-ice-time">未計算</div>
-      </div>
-      <div class="pred-card bat">
-        <div style="font-size:0.8rem; color:#64748b;">🔋 次回 バッテリー交換 推奨時刻</div>
-        <div style="font-size:1.2rem; font-weight:bold; color:#b45309; margin-top:5px;" id="pred-bat-time">未計算</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 3. 過去データグラフ -->
-  <div class="card">
-    <div style="font-weight:bold; margin-bottom:10px;">📈 温度・電圧・残量推移</div>
-    <canvas id="statusChart" height="100"></canvas>
-  </div>
-
-  <!-- 4. 設定エリア (アコーディオン) -->
-  <div class="card">
-    <details>
-      <summary>⚙️ システム設定・アラート閾値・LINE通知設定</summary>
-      
-      <div class="setting-group">
-        <div class="form-item">
-          <label>温度上限アラート閾値 (°C)</label>
-          <input type="number" id="cfg-temp-alert" value="15.0" step="0.5">
-        </div>
-        <div class="form-item">
-          <label>バッテリー残量下限アラート閾値 (%)</label>
-          <input type="number" id="cfg-bat-alert" value="20" min="5" max="50">
-        </div>
-        <div class="form-item">
-          <label>Gemini API キー (ブラウザ保存)</label>
-          <input type="password" id="cfg-api-key" placeholder="AIキーを入力">
-        </div>
-        <div class="form-item">
-          <label>LINE Notify Token (事前準備用)</label>
-          <input type="password" id="cfg-line-token" placeholder="LINE Tokenを入力">
-        </div>
-      </div>
-      <button class="btn-save" onclick="saveSettings()">設定を保存</button>
-    </details>
-  </div>
-</div>
-
-<script>
-  // 1. 電圧 (V) からバッテリー残量 (%) および 推定稼働時間を簡易算出するロジック
-  // リチウムイオン 1S 想定: 満充電 4.2V (100%) ~ 終止 3.2V (0%)
-  // 平均消費電流: 約 100mA, バッテリー容量想定: 2000mAh (データ収集期につき標準値で計算)
-  function calcBatteryInfo(volts) {
-    if (volts <= 0) return { percent: 0, remainHours: 0 };
+# ==========================================
+# 5. Ambient データ送信処理
+# ==========================================
+def send_to_ambient(temp, volts, rssi):
+    url = f"https://ambidata.io/api/v2/channels/{AMBIENT_CHANNEL_ID}/data"
+    headers = {'Content-Type': 'application/json'}
+    payload = {
+        "writeKey": AMBIENT_WRITE_KEY,
+        "d1": temp,
+        "d2": volts,
+        "d3": rssi
+    }
     
-    let percent = Math.round(((volts - 3.2) / (4.2 - 3.2)) * 100);
-    if (percent > 100) percent = 100;
-    if (percent < 0) percent = 0;
+    try:
+        response = urequests.post(url, json=payload, headers=headers)
+        print(f"[{time.ticks_ms()//1000}s] 送信完了: 温度={temp}℃, 電圧={volts}V, RSSI={rssi}dBm")
+        response.close()
+        return True
+    except Exception as e:
+        print(f"Ambient送信エラー: {e}")
+        return False
 
-    // 残量に基づく簡易稼働時間の推定 (満充電で約20時間稼働の仮説値)
-    let totalCapacityHours = 20.0;
-    let remainHours = (percent / 100) * totalCapacityHours;
+# ==========================================
+# 6. メインループ
+# ==========================================
+def main():
+    print("=== 保冷BOX・電源監視システム 起動 ===")
+    connect_wifi()
+    last_send_time = 0
 
-    return { percent: percent, remainHours: remainHours.toFixed(1) };
-  }
+    while True:
+        wdt.feed()
+        current_time = time.time()
+        
+        if current_time - last_send_time >= SEND_INTERVAL_SEC or last_send_time == 0:
+            wlan = network.WLAN(network.STA_IF)
+            if not wlan.isconnected():
+                print("Wi-Fi切断を検知。再接続試行中...")
+                connect_wifi()
+            
+            if wlan.isconnected():
+                temp = read_temperature()
+                volts = read_vsys_voltage()
+                rssi = get_wifi_rssi()
+                
+                if send_to_ambient(temp, volts, rssi):
+                    last_send_time = current_time
+            
+        time.sleep(1)
 
-  // 2. RSSI (dBm) をアンテナ表示に変換
-  function getWifiIcon(rssi) {
-    if (rssi >= -60) return "📶 強";
-    if (rssi >= -75) return "📶 中";
-    if (rssi >= -88) return "📶 弱";
-    return "⚠️ 極弱";
-  }
-
-  // 3. 設定の読み込み・保存 (localStorage)
-  function loadSettings() {
-    document.getElementById('cfg-temp-alert').value = localStorage.getItem('cfg_temp_alert') || "15.0";
-    document.getElementById('cfg-bat-alert').value = localStorage.getItem('cfg_bat_alert') || "20";
-    document.getElementById('cfg-api-key').value = localStorage.getItem('cfg_api_key') || "";
-    document.getElementById('cfg-line-token').value = localStorage.getItem('cfg_line_token') || "";
-  }
-
-  function saveSettings() {
-    localStorage.setItem('cfg_temp_alert', document.getElementById('cfg-temp-alert').value);
-    localStorage.setItem('cfg_bat_alert', document.getElementById('cfg-bat-alert').value);
-    localStorage.setItem('cfg_api_key', document.getElementById('cfg-api-key').value);
-    localStorage.setItem('cfg_line_token', document.getElementById('cfg-line-token').value);
-    alert('設定をブラウザに保存しました！');
-  }
-
-  // 初期ロード実行
-  loadSettings();
-
-  // 4. Ambient等からのデータ受信用ダミー描画関数 (実装時はFetchに差し替え)
-  function updateDashboardUI(temp, volts, rssi, lastTime) {
-    const bat = calcBatteryInfo(volts);
-    const wifiText = getWifiIcon(rssi);
-
-    document.getElementById('val-temp').innerText = `${temp} °C`;
-    document.getElementById('val-bat').innerText = `${bat.percent} %`;
-    document.getElementById('val-volts').innerText = `${volts} V (推定稼働: 約${bat.remainHours}時間)`;
-    document.getElementById('val-rssi').innerText = `${rssi} dBm`;
-    document.getElementById('wifi-icon').innerText = wifiText;
-    document.getElementById('val-last-time').innerText = `最終更新: ${lastTime}`;
-
-    // アラート閾値判定 (事前準備)
-    const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
-    const alertBat = parseInt(document.getElementById('cfg-bat-alert').value);
-
-    if (temp >= alertTemp) {
-      document.getElementById('status-temp').innerText = "⚠️ 温度上昇警告！";
-      document.getElementById('status-temp').style.color = "red";
-    } else {
-      document.getElementById('status-temp').innerText = "正常範囲内";
-      document.getElementById('status-temp').style.color = "#64748b";
-    }
-  }
-
-  // 5. Gemini AI 状況分析 & 推奨時刻算出
-  async function runAiAnalysis() {
-    const apiKey = document.getElementById('cfg-api-key').value;
-    if (!apiKey) {
-      alert("最下部の設定エリアで Gemini API キーを設定してください。");
-      return;
-    }
-
-    document.getElementById('ai-response-text').innerText = "AIが過去の推移データから最適メンテナンス時刻を計算中...";
-
-    // 現状の簡易呼び出し（実際には蓄積データをプロンプトに送る）
-    // AI応答内で JSON や特定形式を出力させ、推奨時刻エリアに反映する設計
-    setTimeout(() => {
-      document.getElementById('ai-response-text').innerText = "【分析完了】現在のペースで消費される場合、本日の夜間帯に保冷剤の冷却能力が低下します。余裕をもった事前交換を推奨します。";
-      document.getElementById('pred-ice-time').innerText = "本日 21:30 頃";
-      document.getElementById('pred-bat-time').innerText = "明日 08:00 頃";
-    }, 1500);
-  }
-</script>
-</body>
-</html>
+if __name__ == "__main__":
+    main()
