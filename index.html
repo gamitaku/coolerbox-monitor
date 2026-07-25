@@ -159,9 +159,11 @@
 <script>
   const AMBIENT_CHANNEL_ID = "102675";
   let currentTemp = "--";
-  let predIceTime = "未計算";
-  let predBatTime = "未計算";
+  let currentBatPercent = "--";
+  let predIceTime = "まだ未計算だよ";
+  let predBatTime = "まだ未計算だよ";
   let lastNotifiedMinute = "";
+  let lastAlertTime = 0; // アラート連投防止用タイムスタンプ
 
   // ログ出力用関数
   function writeLog(msg) {
@@ -173,7 +175,7 @@
   }
 
   // --------------------------------------------------
-  // 1. Ambient API からデータ取得 (最新要素を正しく取得)
+  // 1. Ambient API からデータ取得
   // --------------------------------------------------
   function fetchAmbientData() {
     const oldScript = document.getElementById('ambient-jsonp');
@@ -181,7 +183,6 @@
 
     window.ambientCallback = function(data) {
       if (data && data.length > 0) {
-        // 配列の最後（data.length - 1）が最新データ
         const latest = data[data.length - 1];
         
         const temp = latest.d1 !== undefined ? parseFloat(latest.d1).toFixed(1) : 0;
@@ -194,6 +195,9 @@
 
         updateDashboardUI(temp, volts, rssi, lastTime);
         writeLog(`[Ambient] データ取得成功: ${temp}℃ / ${volts}V / ${rssi}dBm (${lastTime})`);
+        
+        // 閾値チェック（オーバーしていたら自動LINE通知）
+        checkThresholdsAndAlert(parseFloat(temp), volts);
       } else {
         writeLog("[Ambient] ⚠️ データが空で返却されました。");
       }
@@ -201,7 +205,6 @@
 
     const script = document.createElement('script');
     script.id = 'ambient-jsonp';
-    // n=5 で直近データ群を取得して最後の要素を参照
     script.src = `https://ambidata.io/api/v2/channels/${AMBIENT_CHANNEL_ID}/data?n=5&callback=ambientCallback`;
     document.body.appendChild(script);
   }
@@ -227,6 +230,8 @@
 
   function updateDashboardUI(temp, volts, rssi, lastTime) {
     const bat = calcBatteryInfo(volts);
+    currentBatPercent = bat.percent;
+
     document.getElementById('val-temp').innerText = `${temp} °C`;
     document.getElementById('val-bat').innerText = `${bat.percent} %`;
     document.getElementById('val-volts').innerText = `${volts} V (推定稼働: 約${bat.remainHours}時間)`;
@@ -237,16 +242,48 @@
     const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
     const statusElem = document.getElementById('status-temp');
     if (temp >= alertTemp) {
-      statusElem.innerText = "⚠️ 温度上昇警告！";
+      statusElem.innerText = "⚠️ 温度上昇中！冷やしてね";
       statusElem.style.color = "red";
     } else {
-      statusElem.innerText = "正常範囲内";
-      statusElem.style.color = "#64748b";
+      statusElem.innerText = "ひんやり快適♪";
+      statusElem.style.color = "#10b981";
     }
   }
 
   // --------------------------------------------------
-  // 3. 設定読み込み・保存
+  // 3. アラート（閾値超え）判定
+  // --------------------------------------------------
+  function checkThresholdsAndAlert(temp, volts) {
+    const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
+    const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
+    const bat = calcBatteryInfo(volts);
+
+    let isTempAlert = temp >= alertTemp;
+    let isBatAlert = bat.percent <= alertBat && bat.percent > 0;
+
+    if (isTempAlert || isBatAlert) {
+      const now = Date.now();
+      // 15分（900,000ミリ秒）以内の連続アラート送信を防止
+      if (now - lastAlertTime > 900000) {
+        lastAlertTime = now;
+        writeLog("⚠️ 閾値オーバー検知！SOSメッセージを送信します。");
+        
+        let alertMsg = `🚨【たすけて！保冷BOXからのお願い】🚨\n\n`;
+        if (isTempAlert) {
+          alertMsg += `BOX内が暑くなってきたよ〜💦\n現在の温度: ${temp}℃ (目標: ${alertTemp}℃以下)\n👉 保冷剤を新しく交換してもらえると助かります！🧊✨\n\n`;
+        }
+        if (isBatAlert) {
+          alertMsg += `バッテリーが腹ペコです…🔋⚡\n現在の残量: ${bat.percent}%\n👉 バッテリーの充電か交換をお願いします！🙏\n\n`;
+        }
+        alertMsg += `カメラ機材をしっかり守るためにご協力お願いします！📷✨`;
+
+        sendLineMessage(alertMsg);
+      }
+    }
+  }
+
+  // --------------------------------------------------
+  // 4. 設定読み込み・保存
   // --------------------------------------------------
   function loadSettings() {
     document.getElementById('cfg-temp-alert').value = localStorage.getItem('cfg_temp_alert') || "15.0";
@@ -266,12 +303,12 @@
     localStorage.setItem('cfg_time_1', document.getElementById('cfg-time-1').value);
     localStorage.setItem('cfg_time_2', document.getElementById('cfg-time-2').value);
     localStorage.setItem('cfg_time_3', document.getElementById('cfg-time-3').value);
-    writeLog("設定をローカルストレージに保存しました。");
+    writeLog("設定を保存しました♪");
     alert('設定を保存しました！');
   }
 
   // --------------------------------------------------
-  // 4. AI 分析 & LINE 通知送信 (CORS対策 mode: "no-cors")
+  // 5. AI 分析 & かわいらしいLINEメッセージ作成
   // --------------------------------------------------
   async function runAiAnalysis() {
     const apiKey = document.getElementById('cfg-api-key').value;
@@ -282,21 +319,25 @@
     writeLog("Gemini API によるメンテ予測を実行中...");
     document.getElementById('ai-response-text').innerText = "AIが過去の推移データから最適メンテナンス時刻を計算中...";
     setTimeout(() => {
-      document.getElementById('ai-response-text').innerText = "【分析完了】現在のペースで消費される場合、本日の夜間帯に保冷剤の冷却能力が低下します。";
-      predIceTime = "21:30";
-      predBatTime = "翌日 08:00";
-      document.getElementById('pred-ice-time').innerText = `本日 ${predIceTime} 頃`;
+      document.getElementById('ai-response-text').innerText = "【分析完了】今のペースだと、今夜には保冷剤のパワーが落ちてきそうだよ！";
+      predIceTime = "本日 21:30";
+      predBatTime = "明日 08:00";
+      document.getElementById('pred-ice-time').innerText = `${predIceTime} 頃`;
       document.getElementById('pred-bat-time').innerText = `${predBatTime} 頃`;
       writeLog("AI予測完了: 保冷剤 21:30 / バッテリー 翌08:00");
     }, 1500);
   }
 
-  function buildLineMessage() {
-    return `📷【保冷BOX 定時ステータス報告】\n` +
-           `現在温度: ${currentTemp} ℃\n` +
-           `次回交換推奨時刻\n` +
-           `  保冷剤: ${predIceTime}\n` +
-           `  バッテリー: ${predBatTime}`;
+  // 愛嬌たっぷりな定時通知メッセージ
+  function buildCuteLineMessage() {
+    return `📦【保冷BOXちゃん 定期レポート】✨\n\n` +
+           `いつもカメラを守ってくれてありがとう！今のボクの様子をお知らせするね🤖♪\n\n` +
+           `🌡️ BOX内温度：${currentTemp} ℃（ひんやりキープ中！）\n` +
+           `🔋 バッテリー：${currentBatPercent} %\n\n` +
+           `そろそろ準備しておくと安心なメンテナンス予定だよ👇\n` +
+           `🧊 保冷剤の交換目安 ➔ ${predIceTime}\n` +
+           `⚡ バッテリー充電目安 ➔ ${predBatTime}\n\n` +
+           `今日も大切なカメラをバッチリ保護するね！よろしくお願いしますカメラ📷✨`;
   }
 
   async function sendLineMessage(msg) {
@@ -309,7 +350,6 @@
     writeLog("送信試行中 -> " + webhookUrl);
 
     try {
-      // mode: 'no-cors' を追加してブラウザのCORS制限を回避
       await fetch(webhookUrl, {
         method: "POST",
         mode: "no-cors",
@@ -317,15 +357,15 @@
         body: JSON.stringify({ message: msg })
       });
       
-      writeLog("🚀 GASへリクエストを送信しました（LINEアプリの受信をご確認ください）");
+      writeLog("🚀 LINEにメッセージをお届けしました！");
     } catch (err) {
       writeLog("❌ 通信失敗: " + err);
     }
   }
 
   function testLineNotification() {
-    const msg = buildLineMessage();
-    writeLog("テスト送信を開始します...");
+    const msg = buildCuteLineMessage();
+    writeLog("テスト送信（カワイイ版）を開始します...");
     sendLineMessage(msg);
   }
 
@@ -340,8 +380,8 @@
 
     if (currentHHMM === t1 || currentHHMM === t2 || currentHHMM === t3) {
       lastNotifiedMinute = currentHHMM;
-      writeLog(`定時通知時刻 (${currentHHMM}) に到達しました。自動送信を実行します。`);
-      sendLineMessage(buildLineMessage());
+      writeLog(`定時通知時刻 (${currentHHMM}) です！カワイイ定期メッセージを送るね。`);
+      sendLineMessage(buildCuteLineMessage());
     }
   }
 
