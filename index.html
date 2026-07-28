@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>📷 保冷BOX・電源ステータス監視</title>
+  <title>📷 保冷BOX・電源ステータス 統合監視ダッシュボード</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     :root {
@@ -20,6 +20,8 @@
     .card { background: var(--card-bg); border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid var(--border); }
     h1 { font-size: 1.5rem; margin: 0 0 10px 0; }
     
+    .device-header { font-size: 1.1rem; font-weight: bold; color: #1e293b; border-bottom: 2px solid var(--primary); padding-bottom: 5px; margin-bottom: 15px; }
+
     /* ステータスカードグリッド */
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
     .stat-card { background: #f8fafc; border-radius: 8px; padding: 15px; border: 1px solid var(--border); position: relative; }
@@ -27,6 +29,19 @@
     .stat-value { font-size: 1.8rem; font-weight: bold; color: #1e293b; }
     .stat-sub { font-size: 0.8rem; color: #64748b; margin-top: 4px; }
     .wifi-icon { font-size: 1.1rem; float: right; font-weight: normal; }
+
+    /* Ambient小グラフグリッド */
+    .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
+    .chart-box { border: 1px solid var(--border); border-radius: 8px; padding: 5px; background: #fafafa; cursor: pointer; text-align: center; transition: transform 0.1s; }
+    .chart-box:active { transform: scale(0.98); }
+    .chart-box p { margin: 3px 0; font-size: 0.8rem; font-weight: bold; color: #475569; }
+    iframe { width: 100%; height: 130px; border: none; pointer-events: none; }
+
+    /* モーダル表示 */
+    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center; }
+    .modal-content { background: white; width: 90%; height: 70%; border-radius: 12px; padding: 15px; position: relative; }
+    .modal-content iframe { width: 100%; height: 100%; pointer-events: auto; }
+    .close-btn { position: absolute; top: -15px; right: -15px; background: #ef4444; color: white; border-radius: 50%; width: 35px; height: 35px; font-weight: bold; border: none; cursor: pointer; font-size: 1.1rem; }
 
     /* AI メンテナンス予測領域 */
     .ai-box { background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #bfdbfe; }
@@ -55,28 +70,56 @@
 <body>
 
 <div class="container">
-  <h1>📷 保冷BOX・電源ステータス監視</h1>
+  <h1>📷 保冷BOX・電源ステータス 統合監視</h1>
 
-  <!-- 1. リアルタイム・ステータス表示 -->
-  <div class="card grid">
-    <div class="stat-card">
-      <div class="stat-title">現在のBOX内温度</div>
-      <div class="stat-value" id="val-temp">-- °C</div>
-      <div class="stat-sub" id="status-temp">データ取得中...</div>
+  <!-- 1. 1号機: 保冷BOX内部 (Pico W) -->
+  <div class="card">
+    <div class="device-header">📍 保冷BOX内部 (Pico W)</div>
+    <div class="grid">
+      <div class="stat-card">
+        <div class="stat-title">現在のBOX内温度</div>
+        <div class="stat-value" id="val-temp">-- °C</div>
+        <div class="stat-sub" id="status-temp">データ取得中...</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">バッテリー残量 / 電圧</div>
+        <div class="stat-value" id="val-bat">-- %</div>
+        <div class="stat-sub" id="val-volts">-- V (推定稼働: --時間)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-title">Wi-Fi 電波強度 <span class="wifi-icon" id="wifi-icon">📶 --</span></div>
+        <div class="stat-value" id="val-rssi">-- dBm</div>
+        <div class="stat-sub" id="val-last-time">最終更新: --:--</div>
+      </div>
     </div>
-    <div class="stat-card">
-      <div class="stat-title">バッテリー残量 / 電圧</div>
-      <div class="stat-value" id="val-bat">-- %</div>
-      <div class="stat-sub" id="val-volts">-- V (推定稼働: --時間)</div>
-    </div>
-    <div class="stat-card">
-      <div class="stat-title">Wi-Fi 電波強度 <span class="wifi-icon" id="wifi-icon">📶 --</span></div>
-      <div class="stat-value" id="val-rssi">-- dBm</div>
-      <div class="stat-sub" id="val-last-time">最終更新: --:--</div>
+    <div class="charts-grid">
+      <div class="chart-box" onclick="openModal('https://ambidata.io/ch/sc/102675/d1')">
+        <p>🌡️ 温度推移 (タップで全画面表示)</p>
+        <iframe src="https://ambidata.io/ch/sc/102675/d1"></iframe>
+      </div>
+      <div class="chart-box" onclick="openModal('https://ambidata.io/ch/sc/102675/d2')">
+        <p>⚡ 電圧推移 (タップで全画面表示)</p>
+        <iframe src="https://ambidata.io/ch/sc/102675/d2"></iframe>
+      </div>
     </div>
   </div>
 
-  <!-- 2. AI メンテナンス予測 & 推奨時刻 -->
+  <!-- 2. 2号機: 検証機1 (Pico 2 W) -->
+  <div class="card">
+    <div class="device-header">🧪 検証機1 (Pico 2 W)</div>
+    <div class="charts-grid">
+      <div class="chart-box" onclick="openModal('https://ambidata.io/ch/sc/102675/d4')">
+        <p>🌡️ 温度推移 (タップで全画面表示)</p>
+        <iframe src="https://ambidata.io/ch/sc/102675/d4"></iframe>
+      </div>
+      <div class="chart-box" onclick="openModal('https://ambidata.io/ch/sc/102675/d5')">
+        <p>⚡ 電圧推移 (タップで全画面表示)</p>
+        <iframe src="https://ambidata.io/ch/sc/102675/d5"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. AI メンテナンス予測 & 推奨時刻 -->
   <div class="card ai-box">
     <div class="ai-header">
       <div style="font-weight:bold; color:#1e40af;">🤖 Gemini AI 状況分析 & メンテナンス推奨時刻</div>
@@ -102,7 +145,7 @@
     </div>
   </div>
 
-  <!-- 3. 設定エリア (折りたたみ) -->
+  <!-- 4. 設定エリア (折りたたみ) -->
   <div class="card">
     <details open>
       <summary>⚙️ システム設定・アラート閾値・LINE定時通知設定</summary>
@@ -161,6 +204,14 @@
   </footer>
 </div>
 
+<!-- 拡大表示用モーダル -->
+<div id="chartModal" class="modal" onclick="closeModal()">
+  <div class="modal-content" onclick="event.stopPropagation()">
+    <button class="close-btn" onclick="closeModal()">✕</button>
+    <iframe id="modalIframe" src=""></iframe>
+  </div>
+</div>
+
 <script>
   let currentTemp = "--";
   let currentBatPercent = "--";
@@ -179,6 +230,16 @@
     logBox.scrollTop = logBox.scrollHeight;
   }
 
+  // モーダル操作用関数
+  function openModal(url) {
+    document.getElementById('modalIframe').src = url;
+    document.getElementById('chartModal').style.display = 'flex';
+  }
+  function closeModal() {
+    document.getElementById('chartModal').style.display = 'none';
+    document.getElementById('modalIframe').src = '';
+  }
+
   // --------------------------------------------------
   // 1. GAS経由でステータスデータ取得（CORS・ブロック対策）
   // --------------------------------------------------
@@ -190,7 +251,6 @@
     }
 
     try {
-      // GASのdoGetに ?action=getData を投げる
       const gasBaseUrl = webhookUrl.split('?')[0];
       const targetUrl = `${gasBaseUrl}?action=getData`;
 
@@ -213,11 +273,13 @@
       
       const batInfo = calcBatteryInfo(parseFloat(data.volts));
       document.getElementById('val-volts').innerText = `${data.volts} V (推定稼働: 約${batInfo.remainHours}時間)`;
-      document.getElementById('val-rssi').innerText = `${data.wifi.text}`;
-      document.getElementById('wifi-icon').innerText = data.wifi.icon;
+      if (data.wifi) {
+        document.getElementById('val-rssi').innerText = `${data.wifi.text || '--'}`;
+        document.getElementById('wifi-icon').innerText = data.wifi.icon || '📶 --';
+      }
       document.getElementById('val-last-time').innerText = `最終更新: ${nowTime}`;
 
-      // AI予測データの反映（GAS側から返却される項目に対応）
+      // AI予測データの反映
       if (data.over35Time) {
         predHotTime = data.over35Time;
         document.getElementById('pred-hot-time').innerText = predHotTime;
@@ -285,8 +347,7 @@
 
     if (isTempAlert || isBatAlert) {
       const now = Date.now();
-      // 15分（900,000ミリ秒）以内の連続アラート送信を防止
-      if (now - lastAlertTime > 900000) {
+      if (now - lastAlertTime > 900000) { // 15分連投防止
         lastAlertTime = now;
         writeLog("⚠️ 閾値オーバー検知！SOSメッセージを送信します。");
         
@@ -338,7 +399,6 @@
     alert("最新の予測データを反映しました！");
   }
 
-  // 愛嬌たっぷりな定時通知メッセージ
   function buildCuteLineMessage() {
     return `📦【保冷BOXちゃん 定期レポート】✨\n\n` +
            `いつもカメラを守ってくれてありがとう！今のボクの様子をお知らせするね🤖♪\n\n` +
