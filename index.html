@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>📷 保冷BOX・電源ステータス 統合監視ダッシュボード</title>
+  <!-- Chart.js（グラフ描画ライブラリ） -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     :root {
       --bg: #f4f6f9;
@@ -20,50 +22,31 @@
     .device-header { font-size: 1rem; font-weight: bold; color: var(--text); border-bottom: 2px solid var(--primary); padding-bottom: 4px; margin-bottom: 12px; }
 
     /* コンパクトなカード型グリッド */
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
-    .stat-card { background: #f8fafc; border-radius: 8px; padding: 12px; border: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-    .stat-info { flex: 1; }
-    .stat-title { font-size: 0.8rem; color: #64748b; margin-bottom: 2px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+    .stat-card { background: #f8fafc; border-radius: 8px; padding: 12px; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+    .stat-top { display: flex; justify-content: space-between; align-items: flex-start; }
+    .stat-title { font-size: 0.8rem; color: #64748b; }
     .stat-value { font-size: 1.6rem; font-weight: bold; color: #0f172a; }
-    .stat-sub { font-size: 0.78rem; font-weight: 500; margin-top: 2px; }
+    .stat-sub { font-size: 0.78rem; font-weight: 500; }
     
-    /* 横付けミニグラフ領域 (縮小表示に最適化) */
-    .thumb-graph { 
-      width: 100px; 
-      height: 60px; 
-      border-radius: 6px; 
-      overflow: hidden; 
-      border: 1px solid #cbd5e1; 
-      background: #fff; 
-      cursor: pointer; 
-      position: relative; 
-      flex-shrink: 0; 
-      margin-left: 10px; 
-    }
-    .thumb-graph iframe { 
-      width: 300px; 
-      height: 180px; 
-      border: none; 
-      pointer-events: none; 
-      transform: scale(0.333); 
-      transform-origin: top left; 
-    }
+    /* 自前グラフ描画キャンバス領域 */
+    .chart-container { width: 100%; height: 90px; position: relative; cursor: pointer; }
 
     /* 検証機用コンパクト配置 */
     .mini-device-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     
     /* モーダル表示 */
     .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 1000; justify-content: center; align-items: center; }
-    .modal-content { background: white; width: 90%; max-width: 800px; height: 60%; border-radius: 12px; padding: 15px; position: relative; }
-    .modal-content iframe { width: 100%; height: 100%; border: none; pointer-events: auto; }
-    .close-btn { position: absolute; top: -12px; right: -12px; background: #ef4444; color: white; border-radius: 50%; width: 32px; height: 32px; font-weight: bold; border: none; cursor: pointer; font-size: 1rem; }
+    .modal-content { background: white; width: 90%; max-width: 800px; height: 60%; border-radius: 12px; padding: 20px; position: relative; display: flex; flex-direction: column; }
+    .modal-content canvas { width: 100% !important; height: 100% !important; }
+    .close-btn { position: absolute; top: -12px; right: -12px; background: #ef4444; color: white; border-radius: 50%; width: 32px; height: 32px; font-weight: bold; border: none; cursor: pointer; font-size: 1rem; z-index: 1001; }
 
     /* AI 領域 */
     .ai-box { background: #f0f9ff; border: 1px solid #bae6fd; }
     .ai-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
     .btn-ai { background: var(--primary); color: white; border: none; padding: 8px 14px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; cursor: pointer; }
     .prediction-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 10px; }
-    .pred-card { background: white; padding: 10px 12px; border-radius: 6px; border-left: 4px solid var(--primary); border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .pred-card { background: white; padding: 10px 12px; border-radius: 6px; border-left: 4px solid var(--primary); border: 1px solid var(--border); border-left-width: 4px; }
 
     /* 設定エリア */
     details summary { font-weight: bold; cursor: pointer; padding: 5px 0; color: #475569; user-select: none; }
@@ -87,37 +70,41 @@
     <div class="device-header">📍 保冷BOX内部 (Pico W)</div>
     <div class="grid">
       
-      <!-- 温度 -->
+      <!-- d1: 温度 -->
       <div class="stat-card">
-        <div class="stat-info">
-          <div class="stat-title">BOX内温度</div>
-          <div class="stat-value" id="val-temp">-- °C</div>
+        <div class="stat-top">
+          <div>
+            <div class="stat-title">BOX内温度</div>
+            <div class="stat-value" id="val-temp">-- °C</div>
+          </div>
           <div class="stat-sub" id="status-temp">データ取得中...</div>
         </div>
-        <!-- 横付けミニグラフ -->
-        <div class="thumb-graph" title="タップで拡大表示" onclick="openModal('https://ambidata.io/ch/sc/102675/d1')">
-          <iframe src="https://ambidata.io/ch/sc/102675/d1"></iframe>
+        <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d1', 'BOX内温度推移 (℃)', '#ef4444')">
+          <canvas id="chart-d1"></canvas>
         </div>
       </div>
 
-      <!-- バッテリー / 電圧 -->
+      <!-- d2: バッテリー電圧 -->
       <div class="stat-card">
-        <div class="stat-info">
-          <div class="stat-title">バッテリー残量 / 電圧</div>
-          <div class="stat-value" id="val-bat">-- %</div>
+        <div class="stat-top">
+          <div>
+            <div class="stat-title">バッテリー残量 / 電圧</div>
+            <div class="stat-value" id="val-bat">-- %</div>
+          </div>
           <div class="stat-sub" id="status-bat">データ取得中...</div>
         </div>
-        <!-- 横付けミニグラフ -->
-        <div class="thumb-graph" title="タップで拡大表示" onclick="openModal('https://ambidata.io/ch/sc/102675/d2')">
-          <iframe src="https://ambidata.io/ch/sc/102675/d2"></iframe>
+        <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d2', 'バッテリー電圧推移 (V)', '#3b82f6')">
+          <canvas id="chart-d2"></canvas>
         </div>
       </div>
 
-      <!-- 電波強度 & 更新日時 -->
+      <!-- 通信ステータス -->
       <div class="stat-card" style="grid-column: span 1 / -1;">
-        <div class="stat-info">
-          <div class="stat-title">通信ステータス</div>
-          <div style="font-size: 1.1rem; font-weight: bold; color: #334155;" id="val-rssi">📶 -- dBm</div>
+        <div class="stat-top">
+          <div>
+            <div class="stat-title">通信ステータス</div>
+            <div style="font-size: 1.1rem; font-weight: bold; color: #334155;" id="val-rssi">📶 -- dBm</div>
+          </div>
           <div class="stat-sub" id="val-last-time" style="color: #64748b;">最終更新: --:--</div>
         </div>
       </div>
@@ -130,21 +117,15 @@
     <div class="device-header">🧪 検証機1 (Pico 2 W)</div>
     <div class="mini-device-grid">
       <div class="stat-card">
-        <div class="stat-info">
-          <div class="stat-title">温度推移</div>
-          <div style="font-size: 0.85rem; color: #64748b;">グラフ表示</div>
-        </div>
-        <div class="thumb-graph" title="タップで拡大表示" onclick="openModal('https://ambidata.io/ch/sc/102675/d4')">
-          <iframe src="https://ambidata.io/ch/sc/102675/d4"></iframe>
+        <div class="stat-title">検証機1 温度推移 (d4)</div>
+        <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d4', '検証機1 温度推移 (℃)', '#ec4899')">
+          <canvas id="chart-d4"></canvas>
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-info">
-          <div class="stat-title">電圧推移</div>
-          <div style="font-size: 0.85rem; color: #64748b;">グラフ表示</div>
-        </div>
-        <div class="thumb-graph" title="タップで拡大表示" onclick="openModal('https://ambidata.io/ch/sc/102675/d5')">
-          <iframe src="https://ambidata.io/ch/sc/102675/d5"></iframe>
+        <div class="stat-title">検証機1 電圧推移 (d5)</div>
+        <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d5', '検証機1 電圧推移 (V)', '#10b981')">
+          <canvas id="chart-d5"></canvas>
         </div>
       </div>
     </div>
@@ -239,11 +220,16 @@
 <div id="chartModal" class="modal" onclick="closeModal()">
   <div class="modal-content" onclick="event.stopPropagation()">
     <button class="close-btn" onclick="closeModal()">✕</button>
-    <iframe id="modalIframe" src=""></iframe>
+    <div style="width: 100%; height: 100%; position: relative;">
+      <canvas id="modalCanvas"></canvas>
+    </div>
   </div>
 </div>
 
 <script>
+  // グローバル状態保持
+  let chartD1, chartD2, chartD4, chartD5, modalChart;
+  let chartRawHistory = []; // 最新20件のRAW履歴キャッシュ
   let currentTemp = "--";
   let currentBatPercent = "--";
   let predIceTime = "まだ未計算だよ";
@@ -259,25 +245,71 @@
     logBox.scrollTop = logBox.scrollHeight;
   }
 
-  function openModal(url) {
-    document.getElementById('modalIframe').src = url;
+  // モーダル管理（拡大グラフ表示）
+  function openModal(targetCanvasId, title, color) {
+    if (!chartRawHistory || chartRawHistory.length === 0) return;
+
+    const keyMap = { 'chart-d1': 'd1', 'chart-d2': 'd2', 'chart-d4': 'd4', 'chart-d5': 'd5' };
+    const dataKey = keyMap[targetCanvasId];
+
+    const labels = chartRawHistory.map(item => {
+      const d = new Date(item.created);
+      return d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+    });
+    const dataPoints = chartRawHistory.map(item => item[dataKey] !== undefined ? item[dataKey] : null);
+
     document.getElementById('chartModal').style.display = 'flex';
-  }
-  function closeModal() {
-    document.getElementById('chartModal').style.display = 'none';
-    document.getElementById('modalIframe').src = '';
+    
+    const ctx = document.getElementById('modalCanvas').getContext('2d');
+    if (modalChart) modalChart.destroy();
+
+    modalChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: title,
+          data: dataPoints,
+          borderColor: color,
+          backgroundColor: color + '20',
+          borderWidth: 3,
+          pointRadius: 4,
+          fill: true,
+          tension: 0.3
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: true } },
+        scales: {
+          x: { display: true },
+          y: { display: true }
+        }
+      }
+    });
   }
 
-  // 1. データ取得
+  function closeModal() {
+    document.getElementById('chartModal').style.display = 'none';
+    if (modalChart) {
+      modalChart.destroy();
+      modalChart = null;
+    }
+  }
+
+  // 1. リードキーで過去20件のデータを取得し、Chart.jsで描画
   async function fetchAmbientData() {
+    const readKey = "db63a7f0c9718b60";
+    const channelId = "102675";
     const webhookUrl = document.getElementById('cfg-line-webhook').value.trim();
     let fetchedSuccess = false;
 
+    // A. GAS経由での優先取得（AI予測などのレスポンス情報が含まれる場合）
     if (webhookUrl) {
       try {
         const gasBaseUrl = webhookUrl.split('?')[0];
         const targetUrl = `${gasBaseUrl}?action=getData`;
-
         const res = await fetch(targetUrl);
         if (res.ok) {
           const data = await res.json();
@@ -292,26 +324,80 @@
       }
     }
 
-    if (!fetchedSuccess) {
-      try {
-        const directUrl = 'https://ambidata.io/api/v2/channels/102675/data?readKey=db63a7f0c9718b60&n=1';
-        const res = await fetch(directUrl);
-        if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+    // B. Ambient リードキーによる直接時系列取得 (リードキー対応)
+    try {
+      const readUrl = `https://ambidata.io/api/v2/channels/${channelId}/data?readKey=${readKey}&n=20`;
+      const res = await fetch(readUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const rawData = await res.json();
+
+      if (Array.isArray(rawData) && rawData.length > 0) {
+        // 古い順にソート
+        chartRawHistory = rawData.reverse();
         
-        const rawData = await res.json();
-        if (Array.isArray(rawData) && rawData.length > 0) {
-          const latest = rawData[0];
+        const labels = chartRawHistory.map(item => {
+          const d = new Date(item.created);
+          return d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+        });
+
+        // 各データ系列を抽出
+        const dataD1 = chartRawHistory.map(item => item.d1 !== undefined ? item.d1 : null);
+        const dataD2 = chartRawHistory.map(item => item.d2 !== undefined ? item.d2 : null);
+        const dataD4 = chartRawHistory.map(item => item.d4 !== undefined ? item.d4 : null);
+        const dataD5 = chartRawHistory.map(item => item.d5 !== undefined ? item.d5 : null);
+
+        // 自前グラフを描画/更新
+        chartD1 = createChart('chart-d1', labels, dataD1, 'BOX内温度 (℃)', '#ef4444', chartD1);
+        chartD2 = createChart('chart-d2', labels, dataD2, '電圧 (V)', '#3b82f6', chartD2);
+        chartD4 = createChart('chart-d4', labels, dataD4, '検証機1 温度 (℃)', '#ec4899', chartD4);
+        chartD5 = createChart('chart-d5', labels, dataD5, '検証機1 電圧 (V)', '#10b981', chartD5);
+
+        // GAS未経由時のフォールバックUI更新
+        if (!fetchedSuccess) {
+          const latest = chartRawHistory[chartRawHistory.length - 1];
           const tempVal = latest.d1 !== undefined ? latest.d1 : "--";
           const voltsVal = latest.d2 !== undefined ? latest.d2 : 0;
           const batInfo = calcBatteryInfo(parseFloat(voltsVal));
-          
+
           applyDataToUI(tempVal, voltsVal, batInfo.percent, null, null, null);
-          writeLog(`[Ambient Direct] 取得成功: 温度=${latest.d1}, 電圧=${latest.d2}`);
+          writeLog(`[Ambient Direct] リードキー直接取得・グラフ更新成功 (${rawData.length}件)`);
         }
-      } catch (err) {
-        writeLog("[Ambient Direct Error] 直接取得失敗: " + err.message);
       }
+    } catch (err) {
+      writeLog("[Ambient Direct Error] 直接取得失敗: " + err.message);
     }
+  }
+
+  // Chart.js インスタンス作成用ヘルパー
+  function createChart(canvasId, labels, dataPoints, labelName, color, existingChart) {
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    if (existingChart) existingChart.destroy();
+
+    return new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: labelName,
+          data: dataPoints,
+          borderColor: color,
+          backgroundColor: color + '20',
+          borderWidth: 2,
+          pointRadius: 2,
+          fill: true,
+          tension: 0.3
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { display: true, ticks: { font: { size: 9 } } },
+          y: { display: true, ticks: { font: { size: 9 } } }
+        }
+      }
+    });
   }
 
   function applyDataToUI(temp, volts, batPercent, wifi, over35Time, aiAdvice) {
@@ -354,7 +440,7 @@
     checkThresholdsAndAlert(parsedTemp, parsedVolts);
   }
 
-  // 2. バッテリー計算 & コメント条件ロジックの見直し
+  // 2. バッテリー残量 & 計算ロジック
   function calcBatteryInfo(volts) {
     if (isNaN(volts) || volts <= 0) return { percent: 0, remainHours: "0.0" };
     let percent = Math.round(((volts - 3.2) / (4.2 - 3.2)) * 100);
@@ -369,7 +455,7 @@
     const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
     const bat = calcBatteryInfo(volts);
 
-    // --- A. 温度コメントの条件見直し ---
+    // 温度表示コメント
     const tempElem = document.getElementById('status-temp');
     if (!isNaN(temp)) {
       if (temp >= alertTemp) {
@@ -387,7 +473,7 @@
       tempElem.style.color = "#64748b";
     }
 
-    // --- B. バッテリーコメントの条件見直し ---
+    // バッテリー表示コメント
     const batElem = document.getElementById('status-bat');
     if (!isNaN(volts) && volts > 0) {
       if (bat.percent <= alertBat) {
@@ -406,7 +492,7 @@
     }
   }
 
-  // 3. 重複通知防止付きアラート判定
+  // 3. アラート判定 & LINE通知
   function checkThresholdsAndAlert(temp, volts) {
     const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
     const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
@@ -456,7 +542,7 @@
   function saveSettings() {
     localStorage.setItem('cfg_temp_alert', document.getElementById('cfg-temp-alert').value);
     localStorage.setItem('cfg_bat_alert', document.getElementById('cfg-bat-alert').value);
-    localStorage.setItem('cfg_api_key', document.getElementById('cfg-api-key').value);
+    localStorage.setItem('cfg-api-key', document.getElementById('cfg-api-key').value);
     localStorage.setItem('cfg_line_webhook', document.getElementById('cfg-line-webhook').value);
     localStorage.setItem('cfg_time_1', document.getElementById('cfg-time-1').value);
     localStorage.setItem('cfg_time_2', document.getElementById('cfg-time-2').value);
@@ -529,7 +615,7 @@
   // 初期化実行
   loadSettings();
   fetchAmbientData();
-  writeLog("ダッシュボードを初期化しました。");
+  writeLog("ダッシュボード（全機能・リードキー描画対応）を初期化しました。");
   setInterval(fetchAmbientData, 30000);
   setInterval(checkScheduledNotification, 10000);
 </script>
