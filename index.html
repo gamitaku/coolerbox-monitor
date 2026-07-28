@@ -219,7 +219,6 @@
   let predBatTime = "まだ未計算だよ";
   let predHotTime = "まだ未計算だよ";
   let lastNotifiedMinute = "";
-  let lastAlertTime = 0; // アラート連投防止用タイムスタンプ
 
   // ログ出力用関数
   function writeLog(msg) {
@@ -364,33 +363,46 @@
   }
 
   // --------------------------------------------------
-  // 3. アラート（閾値超え）判定
+  // 3. アラート（閾値超え）判定（重複・リロード発報防止ロジック追加）
   // --------------------------------------------------
   function checkThresholdsAndAlert(temp, volts) {
     const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
     const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
     const bat = calcBatteryInfo(volts);
 
-    let isTempAlert = !isNaN(temp) && temp >= alertTemp;
-    let isBatAlert = bat.percent <= alertBat && bat.percent > 0;
+    // 現在の警告状態（true / false）
+    const isTempAlert = !isNaN(temp) && temp >= alertTemp;
+    const isBatAlert = bat.percent <= alertBat && bat.percent > 0;
 
-    if (isTempAlert || isBatAlert) {
-      const now = Date.now();
-      if (now - lastAlertTime > 900000) { // 15分連投防止
-        lastAlertTime = now;
-        writeLog("⚠️ 閾値オーバー検知！SOSメッセージを送信します。");
-        
-        let alertMsg = `🚨【たすけて！保冷BOXからのお願い】🚨\n\n`;
-        if (isTempAlert) {
-          alertMsg += `BOX内が暑くなってきたよ〜💦\n現在の温度: ${temp}℃ (目標: ${alertTemp}℃以下)\n👉 保冷剤を新しく交換してもらえると助かります！🧊✨\n\n`;
-        }
-        if (isBatAlert) {
-          alertMsg += `バッテリーが腹ペコです…🔋⚡\n現在の残量: ${bat.percent}%\n👉 バッテリーの充電か交換をお願いします！🙏\n\n`;
-        }
-        alertMsg += `カメラ機材をしっかり守るためにご協力お願いします！📷✨`;
+    // 前回の警告状態をストレージから取得（リロード時にも維持するため）
+    const lastTempAlert = localStorage.getItem('state_last_temp_alert') === 'true';
+    const lastBatAlert = localStorage.getItem('state_last_bat_alert') === 'true';
 
-        sendLineMessage(alertMsg);
+    // 「新たに温度警告が発生した」か「新たにバッテリー警告が発生した」かの判定
+    const isNewTempAlert = isTempAlert && !lastTempAlert;
+    const isNewBatAlert = isBatAlert && !lastBatAlert;
+
+    // 現在の状態を保存（状態変化の更新）
+    localStorage.setItem('state_last_temp_alert', isTempAlert);
+    localStorage.setItem('state_last_bat_alert', isBatAlert);
+
+    // 新たに発生したアラート（内容の変化）がある場合のみ発報
+    if (isNewTempAlert || isNewBatAlert) {
+      writeLog("⚠️ アラート条件の変化を検知！通知メッセージを構成します。");
+      
+      let alertMsg = `🚨【たすけて！保冷BOXからのお願い】🚨\n\n`;
+      if (isTempAlert) {
+        alertMsg += `BOX内が暑くなってきたよ〜💦\n現在の温度: ${temp}℃ (目標: ${alertTemp}℃以下)\n👉 保冷剤を新しく交換してもらえると助かります！🧊✨\n\n`;
       }
+      if (isBatAlert) {
+        alertMsg += `バッテリーが腹ペコです…🔋⚡\n現在の残量: ${bat.percent}%\n👉 バッテリーの充電か交換をお願いします！🙏\n\n`;
+      }
+      alertMsg += `カメラ機材をしっかり守るためにご協力お願いします！📷✨`;
+
+      sendLineMessage(alertMsg);
+    } else if (isTempAlert || isBatAlert) {
+      // すでに発報済みで同一状態が継続している場合
+      writeLog("[Alert Skip] アラート状態が継続中ですが、内容に変化がないためLINE送信をスキップしました。");
     }
   }
 
