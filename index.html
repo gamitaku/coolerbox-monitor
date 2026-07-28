@@ -27,9 +27,27 @@
     .stat-value { font-size: 1.6rem; font-weight: bold; color: #0f172a; }
     .stat-sub { font-size: 0.78rem; font-weight: 500; margin-top: 2px; }
     
-    /* 横付けミニグラフ領域 */
-    .thumb-graph { width: 90px; height: 50px; border-radius: 6px; overflow: hidden; border: 1px solid #cbd5e1; background: #fff; cursor: pointer; position: relative; flex-shrink: 0; margin-left: 10px; }
-    .thumb-graph iframe { width: 100%; height: 100%; border: none; pointer-events: none; }
+    /* 横付けミニグラフ領域 (縮小表示に最適化) */
+    .thumb-graph { 
+      width: 100px; 
+      height: 60px; 
+      border-radius: 6px; 
+      overflow: hidden; 
+      border: 1px solid #cbd5e1; 
+      background: #fff; 
+      cursor: pointer; 
+      position: relative; 
+      flex-shrink: 0; 
+      margin-left: 10px; 
+    }
+    .thumb-graph iframe { 
+      width: 300px; 
+      height: 180px; 
+      border: none; 
+      pointer-events: none; 
+      transform: scale(0.333); 
+      transform-origin: top left; 
+    }
 
     /* 検証機用コンパクト配置 */
     .mini-device-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
