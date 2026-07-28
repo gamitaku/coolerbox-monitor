@@ -241,73 +241,102 @@
   }
 
   // --------------------------------------------------
-  // 1. GAS経由でステータスデータ取得（CORS・ブロック対策）
+  // 1. データ取得（GAS経由 または Ambient Directフォールバック）
   // --------------------------------------------------
   async function fetchAmbientData() {
     const webhookUrl = document.getElementById('cfg-line-webhook').value.trim();
-    if (!webhookUrl) {
-      writeLog("[System] ⚠️ 設定エリアのLINE/Webhook通知先URL（GASのURL）が未設定です。");
-      return;
+    let fetchedSuccess = false;
+
+    // A. GASのURLが設定されている場合の処理
+    if (webhookUrl) {
+      try {
+        const gasBaseUrl = webhookUrl.split('?')[0];
+        const targetUrl = `${gasBaseUrl}?action=getData`;
+
+        const res = await fetch(targetUrl);
+        if (res.ok) {
+          const data = await res.json();
+          if (!data.error && data.temp !== undefined) {
+            applyDataToUI(data.temp, data.volts, data.batPercent, data.wifi, data.over35Time, data.aiAdvice);
+            fetchedSuccess = true;
+            writeLog(`[GAS Data] 取得成功: 温度 ${data.temp}℃ / 電圧 ${data.volts}V`);
+          } else if (data.error) {
+            writeLog("[GAS Error] " + data.error);
+          }
+        }
+      } catch (err) {
+        writeLog("[GAS Fetch Error] GAS経由の取得に失敗: " + err.message);
+      }
+    } else {
+      writeLog("[System] ⚠️ GASのWebhook URLが未設定のため、Ambient APIへ直接通信します。");
     }
 
-    try {
-      const gasBaseUrl = webhookUrl.split('?')[0];
-      const targetUrl = `${gasBaseUrl}?action=getData`;
-
-      const res = await fetch(targetUrl);
-      const data = await res.json();
-
-      if (data.error) {
-        writeLog("[GAS Error] " + data.error);
-        return;
-      }
-
-      currentTemp = data.temp;
-      currentBatPercent = data.batPercent;
-      
-      const nowTime = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-      // UI数値更新
-      document.getElementById('val-temp').innerText = `${data.temp} °C`;
-      document.getElementById('val-bat').innerText = `${data.batPercent} %`;
-      
-      const batInfo = calcBatteryInfo(parseFloat(data.volts));
-      document.getElementById('val-volts').innerText = `${data.volts} V (推定稼働: 約${batInfo.remainHours}時間)`;
-      if (data.wifi) {
-        document.getElementById('val-rssi').innerText = `${data.wifi.text || '--'}`;
-        document.getElementById('wifi-icon').innerText = data.wifi.icon || '📶 --';
-      }
-      document.getElementById('val-last-time').innerText = `最終更新: ${nowTime}`;
-
-      // AI予測データの反映
-      if (data.over35Time) {
-        predHotTime = data.over35Time;
-        document.getElementById('pred-hot-time').innerText = predHotTime;
-      }
-
-      if (data.aiAdvice) {
-        if (data.aiAdvice.ice) {
-          predIceTime = data.aiAdvice.ice;
-          document.getElementById('pred-ice-time').innerText = predIceTime;
+    // B. GASで取得できなかった場合のフォールバック（Ambient v2 APIから直接取得）
+    if (!fetchedSuccess) {
+      try {
+        const directUrl = 'https://ambidata.io/api/v2/channels/102675/data?readKey=db63a7f0c9718b60&n=1';
+        const res = await fetch(directUrl);
+        if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+        
+        const rawData = await res.json();
+        if (Array.isArray(rawData) && rawData.length > 0) {
+          const latest = rawData[0];
+          const tempVal = latest.d1 !== undefined ? latest.d1 : "--";
+          const voltsVal = latest.d2 !== undefined ? latest.d2 : 0;
+          const batInfo = calcBatteryInfo(parseFloat(voltsVal));
+          
+          applyDataToUI(tempVal, voltsVal, batInfo.percent, null, null, null);
+          writeLog(`[Ambient Direct] 取得成功: d1(温度)=${latest.d1}, d2(電圧)=${latest.d2}`);
+        } else {
+          writeLog("[Ambient Direct] レスポンス内にデータが存在しません。");
         }
-        if (data.aiAdvice.battery) {
-          predBatTime = data.aiAdvice.battery;
-          document.getElementById('pred-bat-time').innerText = predBatTime;
-        }
-        if (data.aiAdvice.iceStatus) {
-          document.getElementById('ai-response-text').innerText = `【AI診断】🧊保冷剤: ${data.aiAdvice.iceStatus} / 🔋バッテリー: ${data.aiAdvice.batStatus}`;
-        }
+      } catch (err) {
+        writeLog("[Ambient Direct Error] 直接取得失敗: " + err.message);
       }
-
-      updateDashboardUI(parseFloat(data.temp), parseFloat(data.volts));
-      writeLog(`[Data] 取得成功: 温度 ${data.temp}℃ / 電圧 ${data.volts}V`);
-
-      // 閾値チェック
-      checkThresholdsAndAlert(parseFloat(data.temp), parseFloat(data.volts));
-
-    } catch (err) {
-      writeLog("[Network Error] データ取得失敗: " + err);
     }
+  }
+
+  // 取得データを画面UIに反映する共通処理
+  function applyDataToUI(temp, volts, batPercent, wifi, over35Time, aiAdvice) {
+    currentTemp = temp;
+    currentBatPercent = batPercent;
+
+    const nowTime = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    document.getElementById('val-temp').innerText = `${temp} °C`;
+    document.getElementById('val-bat').innerText = `${batPercent} %`;
+
+    const parsedVolts = parseFloat(volts);
+    const batInfo = calcBatteryInfo(parsedVolts);
+    document.getElementById('val-volts').innerText = `${volts} V (推定稼働: 約${batInfo.remainHours}時間)`;
+
+    if (wifi) {
+      document.getElementById('val-rssi').innerText = `${wifi.text || '--'}`;
+      document.getElementById('wifi-icon').innerText = wifi.icon || '📶 --';
+    }
+    document.getElementById('val-last-time').innerText = `最終更新: ${nowTime}`;
+
+    if (over35Time) {
+      predHotTime = over35Time;
+      document.getElementById('pred-hot-time').innerText = predHotTime;
+    }
+
+    if (aiAdvice) {
+      if (aiAdvice.ice) {
+        predIceTime = aiAdvice.ice;
+        document.getElementById('pred-ice-time').innerText = predIceTime;
+      }
+      if (aiAdvice.battery) {
+        predBatTime = aiAdvice.battery;
+        document.getElementById('pred-bat-time').innerText = predBatTime;
+      }
+      if (aiAdvice.iceStatus) {
+        document.getElementById('ai-response-text').innerText = `【AI診断】🧊保冷剤: ${aiAdvice.iceStatus} / 🔋バッテリー: ${aiAdvice.batStatus}`;
+      }
+    }
+
+    updateDashboardUI(parseFloat(temp), parsedVolts);
+    checkThresholdsAndAlert(parseFloat(temp), parsedVolts);
   }
 
   // --------------------------------------------------
@@ -325,7 +354,7 @@
   function updateDashboardUI(temp, volts) {
     const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
     const statusElem = document.getElementById('status-temp');
-    if (temp >= alertTemp) {
+    if (!isNaN(temp) && temp >= alertTemp) {
       statusElem.innerText = "⚠️ 温度上昇中！冷やしてね";
       statusElem.style.color = "red";
     } else {
@@ -342,7 +371,7 @@
     const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
     const bat = calcBatteryInfo(volts);
 
-    let isTempAlert = temp >= alertTemp;
+    let isTempAlert = !isNaN(temp) && temp >= alertTemp;
     let isBatAlert = bat.percent <= alertBat && bat.percent > 0;
 
     if (isTempAlert || isBatAlert) {
@@ -394,7 +423,7 @@
   // 5. AI 分析 & かわいらしいLINEメッセージ作成
   // --------------------------------------------------
   async function runAiAnalysis() {
-    writeLog("最新のGASサーバーデータを再取得してAI分析を反映します...");
+    writeLog("最新のデータを再取得してAI分析を反映します...");
     await fetchAmbientData();
     alert("最新の予測データを反映しました！");
   }
