@@ -4,67 +4,59 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>📷 保冷BOX・電源ステータス 統合監視ダッシュボード</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     :root {
       --bg: #f4f6f9;
       --card-bg: #ffffff;
-      --text: #333;
+      --text: #1e293b;
       --primary: #2563eb;
-      --warning: #eab308;
-      --danger: #ef4444;
       --border: #e2e8f0;
     }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
-    .container { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
-    .card { background: var(--card-bg); border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); border: 1px solid var(--border); }
-    h1 { font-size: 1.5rem; margin: 0 0 10px 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 15px; }
+    .container { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }
+    .card { background: var(--card-bg); border-radius: 12px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid var(--border); }
+    h1 { font-size: 1.3rem; margin: 0 0 5px 0; }
     
-    .device-header { font-size: 1.1rem; font-weight: bold; color: #1e293b; border-bottom: 2px solid var(--primary); padding-bottom: 5px; margin-bottom: 15px; }
+    .device-header { font-size: 1rem; font-weight: bold; color: var(--text); border-bottom: 2px solid var(--primary); padding-bottom: 4px; margin-bottom: 12px; }
 
-    /* ステータスカードグリッド */
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-    .stat-card { background: #f8fafc; border-radius: 8px; padding: 15px; border: 1px solid var(--border); position: relative; }
-    .stat-title { font-size: 0.85rem; color: #64748b; margin-bottom: 5px; }
-    .stat-value { font-size: 1.8rem; font-weight: bold; color: #1e293b; }
-    .stat-sub { font-size: 0.8rem; color: #64748b; margin-top: 4px; }
-    .wifi-icon { font-size: 1.1rem; float: right; font-weight: normal; }
+    /* コンパクトなカード型グリッド */
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+    .stat-card { background: #f8fafc; border-radius: 8px; padding: 12px; border: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .stat-info { flex: 1; }
+    .stat-title { font-size: 0.8rem; color: #64748b; margin-bottom: 2px; }
+    .stat-value { font-size: 1.6rem; font-weight: bold; color: #0f172a; }
+    .stat-sub { font-size: 0.78rem; font-weight: 500; margin-top: 2px; }
+    
+    /* 横付けミニグラフ領域 */
+    .thumb-graph { width: 90px; height: 50px; border-radius: 6px; overflow: hidden; border: 1px solid #cbd5e1; background: #fff; cursor: pointer; position: relative; flex-shrink: 0; margin-left: 10px; }
+    .thumb-graph iframe { width: 100%; height: 100%; border: none; pointer-events: none; }
 
-    /* Ambient小グラフグリッド */
-    .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
-    .chart-box { border: 1px solid var(--border); border-radius: 8px; padding: 5px; background: #fafafa; cursor: pointer; text-align: center; transition: transform 0.1s; }
-    .chart-box:active { transform: scale(0.98); }
-    .chart-box p { margin: 3px 0; font-size: 0.8rem; font-weight: bold; color: #475569; }
-    iframe { width: 100%; height: 130px; border: none; pointer-events: none; }
-
+    /* 検証機用コンパクト配置 */
+    .mini-device-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    
     /* モーダル表示 */
-    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center; }
-    .modal-content { background: white; width: 90%; height: 70%; border-radius: 12px; padding: 15px; position: relative; }
-    .modal-content iframe { width: 100%; height: 100%; pointer-events: auto; }
-    .close-btn { position: absolute; top: -15px; right: -15px; background: #ef4444; color: white; border-radius: 50%; width: 35px; height: 35px; font-weight: bold; border: none; cursor: pointer; font-size: 1.1rem; }
+    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 1000; justify-content: center; align-items: center; }
+    .modal-content { background: white; width: 90%; max-width: 800px; height: 60%; border-radius: 12px; padding: 15px; position: relative; }
+    .modal-content iframe { width: 100%; height: 100%; border: none; pointer-events: auto; }
+    .close-btn { position: absolute; top: -12px; right: -12px; background: #ef4444; color: white; border-radius: 50%; width: 32px; height: 32px; font-weight: bold; border: none; cursor: pointer; font-size: 1rem; }
 
-    /* AI メンテナンス予測領域 */
-    .ai-box { background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); border: 1px solid #bfdbfe; }
-    .ai-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; flex-wrap: wrap; gap: 10px; }
-    .btn-ai { background: var(--primary); color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; }
-    .btn-ai:hover { opacity: 0.9; }
-    .prediction-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; margin-top: 15px; }
-    .pred-card { background: white; padding: 12px 15px; border-radius: 8px; border-left: 4px solid var(--primary); }
-    .pred-card.ice { border-left-color: #3b82f6; }
-    .pred-card.bat { border-left-color: #f59e0b; }
-    .pred-card.hot { border-left-color: #ef4444; background: #fff5f5; }
+    /* AI 領域 */
+    .ai-box { background: #f0f9ff; border: 1px solid #bae6fd; }
+    .ai-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
+    .btn-ai { background: var(--primary); color: white; border: none; padding: 8px 14px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; cursor: pointer; }
+    .prediction-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 10px; }
+    .pred-card { background: white; padding: 10px 12px; border-radius: 6px; border-left: 4px solid var(--primary); border-top: 1px solid var(--border); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 
-    /* 設定エリア (折りたたみ) */
-    details summary { font-weight: bold; cursor: pointer; padding: 10px 0; color: #475569; user-select: none; }
-    .setting-group { margin-top: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 15px; }
-    .form-item { display: flex; flex-direction: column; gap: 5px; }
-    .form-item label { font-size: 0.85rem; font-weight: bold; color: #475569; }
-    .form-item input { padding: 8px; border-radius: 6px; border: 1px solid var(--border); font-size: 0.9rem; }
-    .btn-save { background: #10b981; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 15px; }
-    .btn-test { background: #06b6d4; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.85rem; margin-top: 5px; }
+    /* 設定エリア */
+    details summary { font-weight: bold; cursor: pointer; padding: 5px 0; color: #475569; user-select: none; }
+    .setting-group { margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+    .form-item { display: flex; flex-direction: column; gap: 4px; }
+    .form-item label { font-size: 0.8rem; font-weight: bold; color: #475569; }
+    .form-item input { padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); font-size: 0.85rem; }
+    .btn-save { background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 12px; }
+    .btn-test { background: #06b6d4; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.8rem; margin-top: 4px; }
     
-    /* ログ出力用スタイル */
-    .log-box { background: #0f172a; color: #38bdf8; font-family: monospace; font-size: 0.8rem; padding: 12px; border-radius: 6px; height: 120px; overflow-y: auto; margin-top: 10px; white-space: pre-wrap; word-break: break-all; }
+    .log-box { background: #0f172a; color: #38bdf8; font-family: monospace; font-size: 0.75rem; padding: 10px; border-radius: 6px; height: 100px; overflow-y: auto; margin-top: 8px; white-space: pre-wrap; }
   </style>
 </head>
 <body>
@@ -76,45 +68,66 @@
   <div class="card">
     <div class="device-header">📍 保冷BOX内部 (Pico W)</div>
     <div class="grid">
+      
+      <!-- 温度 -->
       <div class="stat-card">
-        <div class="stat-title">現在のBOX内温度</div>
-        <div class="stat-value" id="val-temp">-- °C</div>
-        <div class="stat-sub" id="status-temp">データ取得中...</div>
+        <div class="stat-info">
+          <div class="stat-title">BOX内温度</div>
+          <div class="stat-value" id="val-temp">-- °C</div>
+          <div class="stat-sub" id="status-temp">データ取得中...</div>
+        </div>
+        <!-- 横付けミニグラフ -->
+        <div class="thumb-graph" title="タップで拡大表示" onclick="openModal('https://ambidata.io/charts/102675/d1')">
+          <iframe src="https://ambidata.io/charts/102675/d1"></iframe>
+        </div>
       </div>
+
+      <!-- バッテリー / 電圧 -->
       <div class="stat-card">
-        <div class="stat-title">バッテリー残量 / 電圧</div>
-        <div class="stat-value" id="val-bat">-- %</div>
-        <div class="stat-sub" id="val-volts">-- V (推定稼働: --時間)</div>
+        <div class="stat-info">
+          <div class="stat-title">バッテリー残量 / 電圧</div>
+          <div class="stat-value" id="val-bat">-- %</div>
+          <div class="stat-sub" id="status-bat">データ取得中...</div>
+        </div>
+        <!-- 横付けミニグラフ -->
+        <div class="thumb-graph" title="タップで拡大表示" onclick="openModal('https://ambidata.io/charts/102675/d2')">
+          <iframe src="https://ambidata.io/charts/102675/d2"></iframe>
+        </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-title">Wi-Fi 電波強度 <span class="wifi-icon" id="wifi-icon">📶 --</span></div>
-        <div class="stat-value" id="val-rssi">-- dBm</div>
-        <div class="stat-sub" id="val-last-time">最終更新: --:--</div>
+
+      <!-- 電波強度 & 更新日時 -->
+      <div class="stat-card" style="grid-column: span 1 / -1;">
+        <div class="stat-info">
+          <div class="stat-title">通信ステータス</div>
+          <div style="font-size: 1.1rem; font-weight: bold; color: #334155;" id="val-rssi">📶 -- dBm</div>
+          <div class="stat-sub" id="val-last-time" style="color: #64748b;">最終更新: --:--</div>
+        </div>
       </div>
-    </div>
-    <div class="charts-grid">
-      <div class="chart-box" onclick="openModal('https://ambidata.io/ch/sc/102675/d1')">
-        <p>🌡️ 温度推移 (タップで全画面表示)</p>
-        <iframe src="https://ambidata.io/ch/sc/102675/d1"></iframe>
-      </div>
-      <div class="chart-box" onclick="openModal('https://ambidata.io/ch/sc/102675/d2')">
-        <p>⚡ 電圧推移 (タップで全画面表示)</p>
-        <iframe src="https://ambidata.io/ch/sc/102675/d2"></iframe>
-      </div>
+
     </div>
   </div>
 
   <!-- 2. 2号機: 検証機1 (Pico 2 W) -->
   <div class="card">
     <div class="device-header">🧪 検証機1 (Pico 2 W)</div>
-    <div class="charts-grid">
-      <div class="chart-box" onclick="openModal('https://ambidata.io/ch/sc/102675/d4')">
-        <p>🌡️ 温度推移 (タップで全画面表示)</p>
-        <iframe src="https://ambidata.io/ch/sc/102675/d4"></iframe>
+    <div class="mini-device-grid">
+      <div class="stat-card">
+        <div class="stat-info">
+          <div class="stat-title">温度推移</div>
+          <div style="font-size: 0.85rem; color: #64748b;">グラフ表示</div>
+        </div>
+        <div class="thumb-graph" title="タップで拡大表示" onclick="openModal('https://ambidata.io/charts/102675/d4')">
+          <iframe src="https://ambidata.io/charts/102675/d4"></iframe>
+        </div>
       </div>
-      <div class="chart-box" onclick="openModal('https://ambidata.io/ch/sc/102675/d5')">
-        <p>⚡ 電圧推移 (タップで全画面表示)</p>
-        <iframe src="https://ambidata.io/ch/sc/102675/d5"></iframe>
+      <div class="stat-card">
+        <div class="stat-info">
+          <div class="stat-title">電圧推移</div>
+          <div style="font-size: 0.85rem; color: #64748b;">グラフ表示</div>
+        </div>
+        <div class="thumb-graph" title="タップで拡大表示" onclick="openModal('https://ambidata.io/charts/102675/d5')">
+          <iframe src="https://ambidata.io/charts/102675/d5"></iframe>
+        </div>
       </div>
     </div>
   </div>
@@ -122,32 +135,32 @@
   <!-- 3. AI メンテナンス予測 & 推奨時刻 -->
   <div class="card ai-box">
     <div class="ai-header">
-      <div style="font-weight:bold; color:#1e40af;">🤖 Gemini AI 状況分析 & メンテナンス推奨時刻</div>
+      <div style="font-weight:bold; color:#0369a1;">🤖 Gemini AI 状況分析 & メンテナンス推奨時刻</div>
       <button class="btn-ai" onclick="runAiAnalysis()">最新データでAI分析を更新</button>
     </div>
-    <div id="ai-response-text" style="font-size:0.9rem; color:#1e293b; line-height:1.5;">
+    <div id="ai-response-text" style="font-size:0.85rem; color:#1e293b; line-height:1.4;">
       データ取得時に、現在の温度・電圧推移からAIが次回交換が必要になる推奨時刻を自動計算して提示します。
     </div>
 
     <div class="prediction-grid">
-      <div class="pred-card hot">
-        <div style="font-size:0.8rem; color:#64748b;">🔥 35度超え予想時刻</div>
-        <div style="font-size:1.2rem; font-weight:bold; color:#dc2626; margin-top:5px;" id="pred-hot-time">未計算</div>
+      <div class="pred-card" style="border-left-color: #ef4444;">
+        <div style="font-size:0.75rem; color:#64748b;">🔥 35度超え予想時刻</div>
+        <div style="font-size:1.1rem; font-weight:bold; color:#dc2626; margin-top:2px;" id="pred-hot-time">未計算</div>
       </div>
-      <div class="pred-card ice">
-        <div style="font-size:0.8rem; color:#64748b;">🧊 次回 保冷剤交換 推奨時刻</div>
-        <div style="font-size:1.2rem; font-weight:bold; color:#1d4ed8; margin-top:5px;" id="pred-ice-time">未計算</div>
+      <div class="pred-card" style="border-left-color: #3b82f6;">
+        <div style="font-size:0.75rem; color:#64748b;">🧊 保冷剤交換 推奨時刻</div>
+        <div style="font-size:1.1rem; font-weight:bold; color:#1d4ed8; margin-top:2px;" id="pred-ice-time">未計算</div>
       </div>
-      <div class="pred-card bat">
-        <div style="font-size:0.8rem; color:#64748b;">🔋 次回 バッテリー交換 推奨時刻</div>
-        <div style="font-size:1.2rem; font-weight:bold; color:#b45309; margin-top:5px;" id="pred-bat-time">未計算</div>
+      <div class="pred-card" style="border-left-color: #f59e0b;">
+        <div style="font-size:0.75rem; color:#64748b;">🔋 バッテリー交換 推奨時刻</div>
+        <div style="font-size:1.1rem; font-weight:bold; color:#b45309; margin-top:2px;" id="pred-bat-time">未計算</div>
       </div>
     </div>
   </div>
 
   <!-- 4. 設定エリア (折りたたみ) -->
   <div class="card">
-    <details open>
+    <details>
       <summary>⚙️ システム設定・アラート閾値・LINE定時通知設定</summary>
       
       <div class="setting-group">
@@ -171,14 +184,14 @@
       </div>
 
       <!-- ログコンソール表示エリア -->
-      <div style="margin-top: 15px;">
-        <div style="font-size:0.85rem; font-weight:bold; color:#475569;">📋 システム実行・通信ログ</div>
+      <div style="margin-top: 12px;">
+        <div style="font-size:0.8rem; font-weight:bold; color:#475569;">📋 システム実行・通信ログ</div>
         <div class="log-box" id="system-log">[System] ログモニター待機中...\n</div>
       </div>
 
-      <hr style="border: 0; border-top: 1px solid var(--border); margin: 20px 0;">
+      <hr style="border: 0; border-top: 1px solid var(--border); margin: 15px 0;">
       
-      <div style="font-weight:bold; font-size:0.9rem; color:#475569; margin-bottom:10px;">⏰ LINE定時通知時刻 (1日3箇所設定)</div>
+      <div style="font-weight:bold; font-size:0.85rem; color:#475569; margin-bottom:8px;">⏰ LINE定時通知時刻 (1日3箇所設定)</div>
       <div class="setting-group">
         <div class="form-item">
           <label>通知時刻 1</label>
@@ -198,7 +211,7 @@
     </details>
   </div>
 
-  <footer style="text-align: center; margin-top: 10px; padding: 10px 0; font-size: 0.85rem; color: #64748b;">
+  <footer style="text-align: center; margin-top: 5px; padding: 5px 0; font-size: 0.8rem; color: #64748b;">
     <a href="./privacy.html" style="color: #64748b; margin-right: 15px;">プライバシーポリシー</a>
     <a href="./terms.html" style="color: #64748b;">利用規約</a>
   </footer>
@@ -220,7 +233,6 @@
   let predHotTime = "まだ未計算だよ";
   let lastNotifiedMinute = "";
 
-  // ログ出力用関数
   function writeLog(msg) {
     const logBox = document.getElementById('system-log');
     if (!logBox) return;
@@ -229,7 +241,6 @@
     logBox.scrollTop = logBox.scrollHeight;
   }
 
-  // モーダル操作用関数
   function openModal(url) {
     document.getElementById('modalIframe').src = url;
     document.getElementById('chartModal').style.display = 'flex';
@@ -239,14 +250,11 @@
     document.getElementById('modalIframe').src = '';
   }
 
-  // --------------------------------------------------
-  // 1. データ取得（GAS経由 または Ambient Directフォールバック）
-  // --------------------------------------------------
+  // 1. データ取得
   async function fetchAmbientData() {
     const webhookUrl = document.getElementById('cfg-line-webhook').value.trim();
     let fetchedSuccess = false;
 
-    // A. GASのURLが設定されている場合の処理
     if (webhookUrl) {
       try {
         const gasBaseUrl = webhookUrl.split('?')[0];
@@ -259,18 +267,13 @@
             applyDataToUI(data.temp, data.volts, data.batPercent, data.wifi, data.over35Time, data.aiAdvice);
             fetchedSuccess = true;
             writeLog(`[GAS Data] 取得成功: 温度 ${data.temp}℃ / 電圧 ${data.volts}V`);
-          } else if (data.error) {
-            writeLog("[GAS Error] " + data.error);
           }
         }
       } catch (err) {
-        writeLog("[GAS Fetch Error] GAS経由の取得に失敗: " + err.message);
+        writeLog("[GAS Fetch Error] GAS経由取得失敗: " + err.message);
       }
-    } else {
-      writeLog("[System] ⚠️ GASのWebhook URLが未設定のため、Ambient APIへ直接通信します。");
     }
 
-    // B. GASで取得できなかった場合のフォールバック（Ambient v2 APIから直接取得）
     if (!fetchedSuccess) {
       try {
         const directUrl = 'https://ambidata.io/api/v2/channels/102675/data?readKey=db63a7f0c9718b60&n=1';
@@ -285,9 +288,7 @@
           const batInfo = calcBatteryInfo(parseFloat(voltsVal));
           
           applyDataToUI(tempVal, voltsVal, batInfo.percent, null, null, null);
-          writeLog(`[Ambient Direct] 取得成功: d1(温度)=${latest.d1}, d2(電圧)=${latest.d2}`);
-        } else {
-          writeLog("[Ambient Direct] レスポンス内にデータが存在しません。");
+          writeLog(`[Ambient Direct] 取得成功: 温度=${latest.d1}, 電圧=${latest.d2}`);
         }
       } catch (err) {
         writeLog("[Ambient Direct Error] 直接取得失敗: " + err.message);
@@ -295,7 +296,6 @@
     }
   }
 
-  // 取得データを画面UIに反映する共通処理
   function applyDataToUI(temp, volts, batPercent, wifi, over35Time, aiAdvice) {
     currentTemp = temp;
     currentBatPercent = batPercent;
@@ -306,12 +306,10 @@
     document.getElementById('val-bat').innerText = `${batPercent} %`;
 
     const parsedVolts = parseFloat(volts);
-    const batInfo = calcBatteryInfo(parsedVolts);
-    document.getElementById('val-volts').innerText = `${volts} V (推定稼働: 約${batInfo.remainHours}時間)`;
+    const parsedTemp = parseFloat(temp);
 
     if (wifi) {
-      document.getElementById('val-rssi').innerText = `${wifi.text || '--'}`;
-      document.getElementById('wifi-icon').innerText = wifi.icon || '📶 --';
+      document.getElementById('val-rssi').innerText = `📶 ${wifi.text || '--'}`;
     }
     document.getElementById('val-last-time').innerText = `最終更新: ${nowTime}`;
 
@@ -334,13 +332,11 @@
       }
     }
 
-    updateDashboardUI(parseFloat(temp), parsedVolts);
-    checkThresholdsAndAlert(parseFloat(temp), parsedVolts);
+    updateDashboardUI(parsedTemp, parsedVolts);
+    checkThresholdsAndAlert(parsedTemp, parsedVolts);
   }
 
-  // --------------------------------------------------
-  // 2. バッテリー & UI処理
-  // --------------------------------------------------
+  // 2. バッテリー計算 & コメント条件ロジックの見直し
   function calcBatteryInfo(volts) {
     if (isNaN(volts) || volts <= 0) return { percent: 0, remainHours: "0.0" };
     let percent = Math.round(((volts - 3.2) / (4.2 - 3.2)) * 100);
@@ -352,63 +348,83 @@
 
   function updateDashboardUI(temp, volts) {
     const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
-    const statusElem = document.getElementById('status-temp');
-    if (!isNaN(temp) && temp >= alertTemp) {
-      statusElem.innerText = "⚠️ 温度上昇中！冷やしてね";
-      statusElem.style.color = "red";
+    const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
+    const bat = calcBatteryInfo(volts);
+
+    // --- A. 温度コメントの条件見直し ---
+    const tempElem = document.getElementById('status-temp');
+    if (!isNaN(temp)) {
+      if (temp >= alertTemp) {
+        tempElem.innerText = "⚠️ 警告: 庫内温度が高すぎます！";
+        tempElem.style.color = "#dc2626";
+      } else if (temp >= alertTemp - 2.0) {
+        tempElem.innerText = "⚡ 注意: 庫内温度が上昇中";
+        tempElem.style.color = "#d97706";
+      } else {
+        tempElem.innerText = "❄️ 正常: ひんやり良好";
+        tempElem.style.color = "#059669";
+      }
     } else {
-      statusElem.innerText = "ひんやり快適♪";
-      statusElem.style.color = "#10b981";
+      tempElem.innerText = "データなし";
+      tempElem.style.color = "#64748b";
+    }
+
+    // --- B. バッテリーコメントの条件見直し ---
+    const batElem = document.getElementById('status-bat');
+    if (!isNaN(volts) && volts > 0) {
+      if (bat.percent <= alertBat) {
+        batElem.innerText = `🪫 警報: 残量低下 (${volts}V / 約${bat.remainHours}h)`;
+        batElem.style.color = "#dc2626";
+      } else if (bat.percent < 40) {
+        batElem.innerText = `⚠️ 注意: 交換準備推奨 (${volts}V / 約${bat.remainHours}h)`;
+        batElem.style.color = "#d97706";
+      } else {
+        batElem.innerText = `🔋 良好: 残量十分 (${volts}V / 約${bat.remainHours}h)`;
+        batElem.style.color = "#059669";
+      }
+    } else {
+      batElem.innerText = "データなし";
+      batElem.style.color = "#64748b";
     }
   }
 
-  // --------------------------------------------------
-  // 3. アラート（閾値超え）判定（重複・リロード発報防止ロジック追加）
-  // --------------------------------------------------
+  // 3. 重複通知防止付きアラート判定
   function checkThresholdsAndAlert(temp, volts) {
     const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
     const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
     const bat = calcBatteryInfo(volts);
 
-    // 現在の警告状態（true / false）
     const isTempAlert = !isNaN(temp) && temp >= alertTemp;
     const isBatAlert = bat.percent <= alertBat && bat.percent > 0;
 
-    // 前回の警告状態をストレージから取得（リロード時にも維持するため）
     const lastTempAlert = localStorage.getItem('state_last_temp_alert') === 'true';
     const lastBatAlert = localStorage.getItem('state_last_bat_alert') === 'true';
 
-    // 「新たに温度警告が発生した」か「新たにバッテリー警告が発生した」かの判定
     const isNewTempAlert = isTempAlert && !lastTempAlert;
     const isNewBatAlert = isBatAlert && !lastBatAlert;
 
-    // 現在の状態を保存（状態変化の更新）
     localStorage.setItem('state_last_temp_alert', isTempAlert);
     localStorage.setItem('state_last_bat_alert', isBatAlert);
 
-    // 新たに発生したアラート（内容の変化）がある場合のみ発報
     if (isNewTempAlert || isNewBatAlert) {
-      writeLog("⚠️ アラート条件の変化を検知！通知メッセージを構成します。");
+      writeLog("⚠️ アラート発生！LINEメッセージを送信します。");
       
-      let alertMsg = `🚨【たすけて！保冷BOXからのお願い】🚨\n\n`;
+      let alertMsg = `🚨【保冷BOX アラート発報】🚨\n\n`;
       if (isTempAlert) {
-        alertMsg += `BOX内が暑くなってきたよ〜💦\n現在の温度: ${temp}℃ (目標: ${alertTemp}℃以下)\n👉 保冷剤を新しく交換してもらえると助かります！🧊✨\n\n`;
+        alertMsg += `🌡️ BOX内温度が上昇しています！\n現在の温度: ${temp}℃ (設定閾値: ${alertTemp}℃)\n👉 保冷剤の交換を行ってください。🧊\n\n`;
       }
       if (isBatAlert) {
-        alertMsg += `バッテリーが腹ペコです…🔋⚡\n現在の残量: ${bat.percent}%\n👉 バッテリーの充電か交換をお願いします！🙏\n\n`;
+        alertMsg += `🔋 バッテリー残量が減少しています！\n現在の残量: ${bat.percent}% (${volts}V)\n👉 充電またはバッテリー交換を行ってください。⚡\n\n`;
       }
-      alertMsg += `カメラ機材をしっかり守るためにご協力お願いします！📷✨`;
+      alertMsg += `カメラ機材保護のためご対応をお願いします。📷`;
 
       sendLineMessage(alertMsg);
     } else if (isTempAlert || isBatAlert) {
-      // すでに発報済みで同一状態が継続している場合
-      writeLog("[Alert Skip] アラート状態が継続中ですが、内容に変化がないためLINE送信をスキップしました。");
+      writeLog("[Alert Skip] アラート状態継続中（重複のため送信スキップ）");
     }
   }
 
-  // --------------------------------------------------
   // 4. 設定読み込み・保存
-  // --------------------------------------------------
   function loadSettings() {
     document.getElementById('cfg-temp-alert').value = localStorage.getItem('cfg_temp_alert') || "15.0";
     document.getElementById('cfg-bat-alert').value = localStorage.getItem('cfg_bat_alert') || "20";
@@ -427,29 +443,27 @@
     localStorage.setItem('cfg_time_1', document.getElementById('cfg-time-1').value);
     localStorage.setItem('cfg_time_2', document.getElementById('cfg-time-2').value);
     localStorage.setItem('cfg_time_3', document.getElementById('cfg-time-3').value);
-    writeLog("設定を保存しました♪");
+    writeLog("設定を保存しました。");
     alert('設定を保存しました！');
   }
 
-  // --------------------------------------------------
-  // 5. AI 分析 & かわいらしいLINEメッセージ作成
-  // --------------------------------------------------
+  // 5. AI 分析 & 定時LINE送信
   async function runAiAnalysis() {
-    writeLog("最新のデータを再取得してAI分析を反映します...");
+    writeLog("最新データを再取得してAI分析を反映します...");
     await fetchAmbientData();
     alert("最新の予測データを反映しました！");
   }
 
   function buildCuteLineMessage() {
-    return `📦【保冷BOXちゃん 定期レポート】✨\n\n` +
-           `いつもカメラを守ってくれてありがとう！今のボクの様子をお知らせするね🤖♪\n\n` +
-           `🌡️ BOX内温度：${currentTemp} ℃（ひんやりキープ中！）\n` +
+    return `📦【保冷BOX 定期レポート】✨\n\n` +
+           `現在の状態をお知らせします🤖\n\n` +
+           `🌡️ BOX内温度：${currentTemp} ℃\n` +
            `🔋 バッテリー：${currentBatPercent} %\n\n` +
-           `そろそろ準備しておくと安心なメンテナンス予定だよ👇\n` +
+           `🔻 メンテナンス予測時刻👇\n` +
            `🔥 35度超え予想 ➔ ${predHotTime}\n` +
-           `🧊 保冷剤の交換目安 ➔ ${predIceTime}\n` +
+           `🧊 保冷剤交換目安 ➔ ${predIceTime}\n` +
            `⚡ バッテリー充電目安 ➔ ${predBatTime}\n\n` +
-           `今日も大切なカメラをバッチリ保護するね！よろしくお願いしますカメラ📷✨`;
+           `引き続き監視を継続します📷✨`;
   }
 
   async function sendLineMessage(msg) {
@@ -459,8 +473,6 @@
       return;
     }
 
-    writeLog("送信試行中 -> " + webhookUrl);
-
     try {
       await fetch(webhookUrl, {
         method: "POST",
@@ -468,8 +480,7 @@
         headers: { "Content-Type": "text/plain" },
         body: JSON.stringify({ message: msg })
       });
-      
-      writeLog("🚀 LINEにメッセージをお届けしました！");
+      writeLog("🚀 LINEにメッセージを送信しました。");
     } catch (err) {
       writeLog("❌ 通信失敗: " + err);
     }
@@ -477,7 +488,7 @@
 
   function testLineNotification() {
     const msg = buildCuteLineMessage();
-    writeLog("テスト送信（カワイイ版）を開始します...");
+    writeLog("テスト送信を開始します...");
     sendLineMessage(msg);
   }
 
@@ -492,7 +503,7 @@
 
     if (currentHHMM === t1 || currentHHMM === t2 || currentHHMM === t3) {
       lastNotifiedMinute = currentHHMM;
-      writeLog(`定時通知時刻 (${currentHHMM}) です！カワイイ定期メッセージを送るね。`);
+      writeLog(`定時通知時刻 (${currentHHMM}) のため送信します。`);
       sendLineMessage(buildCuteLineMessage());
     }
   }
