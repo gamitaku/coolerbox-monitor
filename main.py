@@ -5,26 +5,28 @@ import onewire, ds18x20
 import urequests
 import ujson
 
-# config.py から設定を読み込み
+# ==================================================
+# config.py から設定情報・機密情報を読み込み
+# ==================================================
 try:
     import config
+    DEVICE_NAME = getattr(config, "DEVICE_NAME", "保冷BOX本機 (Pico W)")
     WIFI_SSID = config.WIFI_SSID
     WIFI_PASS = config.WIFI_PASS
     UBIDOTS_TOKEN = config.UBIDOTS_TOKEN
-    GITHUB_TOKEN = config.GITHUB_TOKEN
+    GITHUB_TOKEN = getattr(config, "GITHUB_TOKEN", "")
 except ImportError:
-    print("[エラー] config.py が見つかりません。")
+    print("[エラー] config.py が見つかりません。デフォルト設定で動かします。")
+    DEVICE_NAME = "保冷BOX (未設定)"
     WIFI_SSID = ""
     WIFI_PASS = ""
     UBIDOTS_TOKEN = ""
     GITHUB_TOKEN = ""
 
 # ==================================================
-# 1. システム設定・機体選択
+# 1. システム設定・機体プロファイル判定
 # ==================================================
-DEVICE_NAME = "保冷BOX本機 (Pico W)"
-
-# OTA更新用URL
+# OTA更新用URL (GitHub Raw URL)
 OTA_UPDATE_URL = "https://raw.githubusercontent.com/gamitaku/coolerbox-monitor/refs/heads/main/main.py"
 
 # --------------------------------------------------
@@ -139,7 +141,7 @@ def check_and_update_ota():
     if not OTA_UPDATE_URL:
         return
 
-    print(f"[{DEVICE_NAME}] [OTA] アップデート確認中...")
+    print(f"[{DEVICE_NAME}] [OTA] アップアップデート確認中...")
     try:
         # 非公開リポジトリ用に GitHub Token をヘッダーに付与
         headers = {}
