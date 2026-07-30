@@ -5,18 +5,26 @@ import onewire, ds18x20
 import urequests
 import ujson
 
+# config.py から設定を読み込み
+try:
+    import config
+    WIFI_SSID = config.WIFI_SSID
+    WIFI_PASS = config.WIFI_PASS
+    UBIDOTS_TOKEN = config.UBIDOTS_TOKEN
+    GITHUB_TOKEN = config.GITHUB_TOKEN
+except ImportError:
+    print("[エラー] config.py が見つかりません。")
+    WIFI_SSID = ""
+    WIFI_PASS = ""
+    UBIDOTS_TOKEN = ""
+    GITHUB_TOKEN = ""
+
 # ==================================================
 # 1. システム設定・機体選択
 # ==================================================
 DEVICE_NAME = "保冷BOX本機 (Pico W)"
 
-WIFI_SSID = "F660P-zbQH-G"
-WIFI_PASS = "kesy4eb7ysyb4"
-
-# Ubidots設定
-UBIDOTS_TOKEN = "BBUS-d7nOyVvjWHEUQfqS9LRVevB6yiTnOe"
-
-# OTA更新用URL（未使用時は空文字 ""）
+# OTA更新用URL
 OTA_UPDATE_URL = "https://raw.githubusercontent.com/gamitaku/coolerbox-monitor/refs/heads/main/main.py"
 
 # --------------------------------------------------
@@ -128,12 +136,18 @@ def connect_wifi():
 
 def check_and_update_ota():
     """ WEBから最新のmain.pyを取得して自動更新する処理 """
-    if not OTA_UPDATE_URL or OTA_UPDATE_URL == "https://raw.githubusercontent.com/ユーザー名/リポジトリ名/main/main.py":
+    if not OTA_UPDATE_URL:
         return
 
     print(f"[{DEVICE_NAME}] [OTA] アップデート確認中...")
     try:
-        res = urequests.get(OTA_UPDATE_URL)
+        # 非公開リポジトリ用に GitHub Token をヘッダーに付与
+        headers = {}
+        if GITHUB_TOKEN:
+            headers["Authorization"] = f"token {GITHUB_TOKEN}"
+            headers["User-Agent"] = "PicoW"
+
+        res = urequests.get(OTA_UPDATE_URL, headers=headers)
         if res.status_code == 200:
             new_code = res.text
             res.close()
