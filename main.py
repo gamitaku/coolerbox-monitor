@@ -27,7 +27,7 @@ except ImportError:
 # 1. システム設定・機体プロファイル判定
 # ==================================================
 # OTA更新用URL (GitHub Raw URL)
-OTA_UPDATE_URL = "https://raw.githubusercontent.com/gamitaku/coolerbox-monitor/refs/heads/main/main.py"
+OTA_UPDATE_URL = "https://raw.githubusercontent.com/gamitaku/coolerbox-monitor/main/main.py"
 
 # --------------------------------------------------
 # プロファイル設定 (Ubidots上のデバイス識別名)
