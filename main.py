@@ -17,7 +17,7 @@ WIFI_PASS = "kesy4eb7ysyb4"
 UBIDOTS_TOKEN = "BBUS-d7nOyVvjWHEUQfqS9LRVevB6yiTnOe"
 
 # OTA更新用URL（未使用時は空文字 ""）
-OTA_UPDATE_URL = "https://raw.githubusercontent.com/ユーザー名/リポジトリ名/main/main.py"
+OTA_UPDATE_URL = "https://raw.githubusercontent.com/gamitaku/coolerbox-monitor/refs/heads/main/main.py"
 
 # --------------------------------------------------
 # プロファイル設定 (Ubidots上のデバイス識別名)
