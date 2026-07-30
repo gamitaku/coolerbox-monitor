@@ -143,13 +143,12 @@ def check_and_update_ota():
 
     print(f"[{DEVICE_NAME}] [OTA] アップデート確認中...")
     try:
-        # 非公開リポジトリ用ヘッダー (Acceptでraw形式を指定)
         headers = {
             "User-Agent": "PicoW",
             "Accept": "application/vnd.github.v3.raw"
         }
         if GITHUB_TOKEN:
-            headers["Authorization"] = f"token {GITHUB_TOKEN}"
+            headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
 
         res = urequests.get(OTA_UPDATE_URL, headers=headers)
         if res.status_code == 200:
