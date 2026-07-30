@@ -37,7 +37,7 @@ DEVICE_PROFILES = {
         "DEVICE_LABEL": "pico-box-01"   # 本機の識別ラベル
     },
     "検証機": {
-        "DEVICE_LABEL": "pico-test-01"  # 検証機の識別ラベル (Pico W / Pico 2W 共通)
+        "DEVICE_LABEL": "pico-test-01"  # 検証機の識別ラベル
     }
 }
 
@@ -141,7 +141,7 @@ def check_and_update_ota():
     if not OTA_UPDATE_URL:
         return
 
-    print(f"[{DEVICE_NAME}] [OTA] アップデート確認中...")
+    print(f"[{DEVICE_NAME}] [OTA] アップアップデート確認中...")
     try:
         headers = {
             "User-Agent": "PicoW",
@@ -187,7 +187,17 @@ def main():
     # 1. Wi-Fi 接続
     wifi_ok, rssi = connect_wifi()
     if not wifi_ok:
-        return
+        RETRY_WAIT_SEC = 300  # 5分間（300秒）待機
+        print(f"[{DEVICE_NAME}] [警告] Wi-Fi接続不可。5分後に再起動してリトライします...")
+        
+        # 待機中、LEDを点滅させて接続エラー待機中であることを通知
+        for _ in range(RETRY_WAIT_SEC * 2):
+            led.value(not led.value())
+            time.sleep_ms(500)
+            
+        led.value(0)
+        print(f"[{DEVICE_NAME}] 再起動を実行します...")
+        reset()  # ★ マイコンを再起動してリトライ
 
     # 2. OTAコード更新チェック
     check_and_update_ota()
