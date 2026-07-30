@@ -26,8 +26,8 @@ except ImportError:
 # ==================================================
 # 1. システム設定・機体プロファイル判定
 # ==================================================
-# OTA更新用URL (GitHub Raw URL)
-OTA_UPDATE_URL = "https://raw.githubusercontent.com/gamitaku/coolerbox-monitor/main/main.py"
+# GitHub REST API経由でプライベートリポジトリのコードを取得するURL
+OTA_UPDATE_URL = "https://api.github.com/repos/gamitaku/coolerbox-monitor/contents/main.py"
 
 # --------------------------------------------------
 # プロファイル設定 (Ubidots上のデバイス識別名)
@@ -141,13 +141,15 @@ def check_and_update_ota():
     if not OTA_UPDATE_URL:
         return
 
-    print(f"[{DEVICE_NAME}] [OTA] アップアップデート確認中...")
+    print(f"[{DEVICE_NAME}] [OTA] アップデート確認中...")
     try:
-        # 非公開リポジトリ用に GitHub Token をヘッダーに付与
-        headers = {}
+        # 非公開リポジトリ用ヘッダー (Acceptでraw形式を指定)
+        headers = {
+            "User-Agent": "PicoW",
+            "Accept": "application/vnd.github.v3.raw"
+        }
         if GITHUB_TOKEN:
             headers["Authorization"] = f"token {GITHUB_TOKEN}"
-            headers["User-Agent"] = "PicoW"
 
         res = urequests.get(OTA_UPDATE_URL, headers=headers)
         if res.status_code == 200:
