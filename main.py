@@ -37,7 +37,7 @@ DEVICE_PROFILES = {
         "DEVICE_LABEL": "pico-box-01"   # 本機の識別ラベル
     },
     "検証機": {
-        "DEVICE_LABEL": "pico-test-01"  # 検証機の識別ラベル
+        "DEVICE_LABEL": "pico-test-01"  # 検証機の識別ラベル (Pico W / Pico 2W 共通)
     }
 }
 
