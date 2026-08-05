@@ -110,11 +110,11 @@ def read_vsys():
 # 4. Wi-Fi接続制御 (複数AP対応・判定ロジック組み込み)
 # ==================================================
 def scan_and_connect_best():
-    """ 周辺スキャンを実施し、最強かつ登録済みのAPを選択して接続 """
+    """ 周辺スキャンを実施し、登録済みAPを電波強度順に試行して接続 """
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     
-    # チップ初期化の安定待ち（スキャン空振り防止）
+    # チップ初期化の安定待ち
     time.sleep(1)
     
     try:
@@ -133,42 +133,62 @@ def scan_and_connect_best():
         log("⚠️ 周囲に2.4GHz帯のWi-Fiが見つかりません（0件検出）", "WARN")
         return False, None
 
-    best_target = None
-    best_rssi = -100
-
-    log("--- 周辺AP検出ログ (解析用) ---", "DIAG")
+    # スキャン結果から「登録済みAP」のみを抽出
+    candidate_aps = []
     for net in scanned:
         ssid = net[0].decode('utf-8')
         rssi = net[3]
-        log(f"  検出: SSID='{ssid}', RSSI={rssi}dBm", "DIAG")
         
-        # config.py の "ssid" / "pass" キーと確実に照合
         for ap in AP_LIST:
             target_ssid = ap.get("ssid") or ap.get("SSID")
-            if ssid and target_ssid and ssid == target_ssid and rssi > best_rssi:
-                best_rssi = rssi
-                best_target = ap
+            if ssid and target_ssid and ssid == target_ssid:
+                log(f" 📌 登録AP検出: '{ssid}' (強度: {rssi}dBm)", "DIAG")
+                candidate_aps.append({
+                    "ssid": target_ssid,
+                    "pass": ap.get("pass") or ap.get("PASS"),
+                    "rssi": rssi
+                })
 
-    if best_target:
-        target_ssid = best_target.get("ssid") or best_target.get("SSID")
-        target_pass = best_target.get("pass") or best_target.get("PASS")
+    if not candidate_aps:
+        log("❌ 周囲に登録済みのWi-Fiアクセスポイントが見つかりませんでした", "警告")
+        return False, None
+
+    # RSSI（電波強度）が強い順にソート（第1優先、第2優先...）
+    candidate_aps.sort(key=lambda x: x["rssi"], reverse=True)
+
+    # 強い順に順番に接続を試行
+    for idx, target in enumerate(candidate_aps, 1):
+        target_ssid = target["ssid"]
+        target_pass = target["pass"]
+        target_rssi = target["rssi"]
+
+        log(f"🎯 [試行 {idx}/{len(candidate_aps)}] 選択AP: '{target_ssid}' (強度: {target_rssi}dBm) に接続試行...", "INFO")
         
-        log(f"🎯 選択AP: '{target_ssid}' (強度: {best_rssi}dBm) に接続試行...", "INFO")
+        # 明示的な切断とウェイト（CYW43ハング防止）
         wlan.disconnect()
-        time.sleep_ms(300)
+        time.sleep(1)
+        
         wlan.connect(target_ssid, target_pass)
 
+        # 15秒間 接続完了を監視
         timeout = 15
-        while not wlan.isconnected() and timeout > 0:
+        while timeout > 0:
+            status = wlan.status()
+            # isconnected() か status == 3 (CYW43のSTAT_GOT_IP) で成功判定
+            if wlan.isconnected() or status == 3:
+                ifconfig = wlan.ifconfig()
+                log(f"✅ Wi-Fi接続成功! IP: {ifconfig[0]}, GW: {ifconfig[2]}", "INFO")
+                return True, target_rssi
+            elif status < 0: # エラー状態
+                log(f"⚠️ 接続エラーを検知 (status: {status})", "WARN")
+                break
+                
             time.sleep(1)
             timeout -= 1
 
-        if wlan.isconnected():
-            ifconfig = wlan.ifconfig()
-            log(f"✅ Wi-Fi接続成功! IP: {ifconfig[0]}, GW: {ifconfig[2]}, DNS: {ifconfig[3]}", "INFO")
-            return True, best_rssi
+        log(f"❌ '{target_ssid}' への接続タイムアウト/失敗。次のAPを試します...", "WARN")
 
-    log("❌ 接続可能なアクセスポイントが見つからないか、アソシエーションに失敗しました", "警告")
+    log("❌ すべての登録済みアクセスポイントへの接続に失敗しました", "警告")
     return False, None
 
 def send_to_ubidots(payload):
