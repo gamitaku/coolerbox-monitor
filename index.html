@@ -15,18 +15,18 @@
       --border: #e2e8f0;
     }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 15px; }
-    .container { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }
+    .container { max-width: 950px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }
     .card { background: var(--card-bg); border-radius: 12px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid var(--border); }
     h1 { font-size: 1.3rem; margin: 0 0 5px 0; }
     
     .device-header { font-size: 1rem; font-weight: bold; color: var(--text); border-bottom: 2px solid var(--primary); padding-bottom: 4px; margin-bottom: 12px; }
 
-    /* カード型グリッド（1号機・2号機共通） */
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+    /* カード型グリッド（3列配置） */
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
     .stat-card { background: #f8fafc; border-radius: 8px; padding: 12px; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
     .stat-top { display: flex; justify-content: space-between; align-items: flex-start; }
     .stat-title { font-size: 0.8rem; color: #64748b; }
-    .stat-value { font-size: 1.6rem; font-weight: bold; color: #0f172a; }
+    .stat-value { font-size: 1.5rem; font-weight: bold; color: #0f172a; }
     .stat-sub { font-size: 0.78rem; font-weight: 500; }
     
     /* グラフ描画キャンバス領域 */
@@ -94,14 +94,17 @@
         </div>
       </div>
 
-      <!-- 本機: 通信ステータス -->
-      <div class="stat-card" style="grid-column: span 1 / -1;">
+      <!-- 本機: 通信ステータス (電波強度) -->
+      <div class="stat-card">
         <div class="stat-top">
           <div>
             <div class="stat-title">通信ステータス</div>
-            <div style="font-size: 1.1rem; font-weight: bold; color: #334155;" id="val-rssi">📶 -- dBm</div>
+            <div class="stat-value" style="font-size: 1.3rem;" id="val-rssi">📶 -- dBm</div>
           </div>
           <div class="stat-sub" id="val-last-time" style="color: #64748b;">最終更新: --:--</div>
+        </div>
+        <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d3', '電波強度推移 (dBm)', '#8b5cf6')">
+          <canvas id="chart-d3"></canvas>
         </div>
       </div>
 
@@ -141,14 +144,17 @@
         </div>
       </div>
 
-      <!-- 検証機: 通信ステータス -->
-      <div class="stat-card" style="grid-column: span 1 / -1;">
+      <!-- 検証機: 通信ステータス (電波強度) -->
+      <div class="stat-card">
         <div class="stat-top">
           <div>
             <div class="stat-title">通信ステータス</div>
-            <div style="font-size: 1.1rem; font-weight: bold; color: #334155;" id="val-test-rssi">📶 -- dBm</div>
+            <div class="stat-value" style="font-size: 1.3rem;" id="val-test-rssi">📶 -- dBm</div>
           </div>
           <div class="stat-sub" id="val-test-last-time" style="color: #64748b;">最終更新: --:--</div>
+        </div>
+        <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d6', '検証機1 電波強度推移 (dBm)', '#f59e0b')">
+          <canvas id="chart-d6"></canvas>
         </div>
       </div>
 
@@ -251,8 +257,8 @@
 </div>
 
 <script>
-  let chartD1, chartD2, chartD4, chartD5, modalChart;
-  let cacheData = { d1: [], d2: [], d4: [], d5: [] };
+  let chartD1, chartD2, chartD3, chartD4, chartD5, chartD6, modalChart;
+  let cacheData = { d1: [], d2: [], d3: [], d4: [], d5: [], d6: [] };
   let currentTemp = "--";
   let currentBatPercent = "--";
   let lastNotifiedMinute = "";
@@ -296,8 +302,10 @@
 
     cacheData.d1 = mainTemp;
     cacheData.d2 = mainVolts;
+    cacheData.d3 = mainRssi;
     cacheData.d4 = testTemp;
     cacheData.d5 = testVolts;
+    cacheData.d6 = testRssi;
 
     // A. 1号機 (Pico W) UI 更新
     if (mainTemp.length > 0) {
@@ -338,7 +346,6 @@
       const lastTime = new Date(testRssi[testRssi.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
       document.getElementById('val-test-last-time').innerText = `最終更新: ${lastTime}`;
     } else if (testVolts.length > 0) {
-      // RSSIがない場合は最新の電圧タイムスタンプから最終更新時刻だけセット
       const lastTime = new Date(testVolts[testVolts.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
       document.getElementById('val-test-last-time').innerText = `最終更新: ${lastTime}`;
     }
@@ -351,8 +358,10 @@
   function renderCharts() {
     chartD1 = drawSingleChart('chart-d1', cacheData.d1, 'BOX内温度 (℃)', '#ef4444', chartD1);
     chartD2 = drawSingleChart('chart-d2', cacheData.d2, '電圧 (V)', '#3b82f6', chartD2);
+    chartD3 = drawSingleChart('chart-d3', cacheData.d3, '電波強度 (dBm)', '#8b5cf6', chartD3);
     chartD4 = drawSingleChart('chart-d4', cacheData.d4, '検証機1 温度 (℃)', '#ec4899', chartD4);
     chartD5 = drawSingleChart('chart-d5', cacheData.d5, '検証機1 電圧 (V)', '#10b981', chartD5);
+    chartD6 = drawSingleChart('chart-d6', cacheData.d6, '検証機1 電波強度 (dBm)', '#f59e0b', chartD6);
   }
 
   function drawSingleChart(canvasId, seriesData, labelName, color, existingChart) {
@@ -455,7 +464,7 @@
   }
 
   function openModal(targetCanvasId, title, color) {
-    const keyMap = { 'chart-d1': 'd1', 'chart-d2': 'd2', 'chart-d4': 'd4', 'chart-d5': 'd5' };
+    const keyMap = { 'chart-d1': 'd1', 'chart-d2': 'd2', 'chart-d3': 'd3', 'chart-d4': 'd4', 'chart-d5': 'd5', 'chart-d6': 'd6' };
     const seriesData = cacheData[keyMap[targetCanvasId]] || [];
     if (seriesData.length === 0) return;
 
@@ -566,7 +575,7 @@
 
   loadSettings();
   fetchAllUbidotsData();
-  writeLog("ダッシュボード（全レイアウト統一版）を初期化しました。");
+  writeLog("ダッシュボード（電波強度グラフ追加版）を初期化しました。");
   setInterval(fetchAllUbidotsData, 30000);
   setInterval(checkScheduledNotification, 10000);
 </script>
