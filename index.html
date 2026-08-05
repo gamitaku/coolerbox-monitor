@@ -21,7 +21,7 @@
     
     .device-header { font-size: 1rem; font-weight: bold; color: var(--text); border-bottom: 2px solid var(--primary); padding-bottom: 4px; margin-bottom: 12px; }
 
-    /* コンパクトなカード型グリッド */
+    /* カード型グリッド（1号機・2号機共通） */
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
     .stat-card { background: #f8fafc; border-radius: 8px; padding: 12px; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
     .stat-top { display: flex; justify-content: space-between; align-items: flex-start; }
@@ -31,9 +31,6 @@
     
     /* グラフ描画キャンバス領域 */
     .chart-container { width: 100%; height: 90px; position: relative; cursor: pointer; }
-
-    /* 検証機用コンパクト配置 */
-    .mini-device-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     
     /* モーダル表示 */
     .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 1000; justify-content: center; align-items: center; }
@@ -97,7 +94,7 @@
         </div>
       </div>
 
-      <!-- 通信ステータス -->
+      <!-- 本機: 通信ステータス -->
       <div class="stat-card" style="grid-column: span 1 / -1;">
         <div class="stat-top">
           <div>
@@ -113,22 +110,48 @@
 
   <!-- 2. 2号機: 検証機1 (Pico 2 W) -->
   <div class="card">
-    <div class="device-header">🧪 検証機1 (Pico 2 W)</div>
-    <div class="mini-device-grid">
+    <div class="device-header" style="border-bottom-color: #ec4899;">🧪 検証機1 (Pico 2 W)</div>
+    <div class="grid">
+      
+      <!-- 検証機: 温度 -->
       <div class="stat-card">
-        <div class="stat-title">検証機1 温度推移</div>
-        <div style="font-size: 1.2rem; font-weight: bold; margin: 4px 0;" id="val-test-temp">-- °C</div>
+        <div class="stat-top">
+          <div>
+            <div class="stat-title">検証機1 温度</div>
+            <div class="stat-value" id="val-test-temp">-- °C</div>
+          </div>
+          <div class="stat-sub" id="status-test-temp">データ取得中...</div>
+        </div>
         <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d4', '検証機1 温度推移 (℃)', '#ec4899')">
           <canvas id="chart-d4"></canvas>
         </div>
       </div>
+
+      <!-- 検証機: バッテリー電圧 -->
       <div class="stat-card">
-        <div class="stat-title">検証機1 電圧推移</div>
-        <div style="font-size: 1.2rem; font-weight: bold; margin: 4px 0;" id="val-test-volts">-- V</div>
+        <div class="stat-top">
+          <div>
+            <div class="stat-title">バッテリー残量 / 電圧</div>
+            <div class="stat-value" id="val-test-bat">-- %</div>
+          </div>
+          <div class="stat-sub" id="status-test-bat">データ取得中...</div>
+        </div>
         <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d5', '検証機1 電圧推移 (V)', '#10b981')">
           <canvas id="chart-d5"></canvas>
         </div>
       </div>
+
+      <!-- 検証機: 通信ステータス -->
+      <div class="stat-card" style="grid-column: span 1 / -1;">
+        <div class="stat-top">
+          <div>
+            <div class="stat-title">通信ステータス</div>
+            <div style="font-size: 1.1rem; font-weight: bold; color: #334155;" id="val-test-rssi">📶 -- dBm</div>
+          </div>
+          <div class="stat-sub" id="val-test-last-time" style="color: #64748b;">最終更新: --:--</div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -232,9 +255,6 @@
   let cacheData = { d1: [], d2: [], d4: [], d5: [] };
   let currentTemp = "--";
   let currentBatPercent = "--";
-  let predIceTime = "まだ未計算だよ";
-  let predBatTime = "まだ未計算だよ";
-  let predHotTime = "まだ未計算だよ";
   let lastNotifiedMinute = "";
 
   function writeLog(msg) {
@@ -254,7 +274,7 @@
       });
       if (!res.ok) return [];
       const data = await res.json();
-      return (data.results || []).reverse(); // 古い順に並び替え
+      return (data.results || []).reverse();
     } catch (e) {
       writeLog(`[Ubidots Fetch Error] ${deviceLabel}/${variableLabel}: ` + e.message);
       return [];
@@ -272,28 +292,27 @@
     // 2. 検証機 (pico-2w-test) 取得
     const testTemp = await fetchUbidotsVariable("pico-2w-test", "temperature", token);
     const testVolts = await fetchUbidotsVariable("pico-2w-test", "vsys_voltage", token);
+    const testRssi = await fetchUbidotsVariable("pico-2w-test", "rssi", token);
 
     cacheData.d1 = mainTemp;
     cacheData.d2 = mainVolts;
     cacheData.d4 = testTemp;
     cacheData.d5 = testVolts;
 
-    // A. 本機 UI 更新
+    // A. 1号機 (Pico W) UI 更新
     if (mainTemp.length > 0) {
       const latestTemp = mainTemp[mainTemp.length - 1].value;
       currentTemp = latestTemp.toFixed(2);
       document.getElementById('val-temp').innerText = `${currentTemp} °C`;
     }
-    
     if (mainVolts.length > 0) {
       const latestVolts = mainVolts[mainVolts.length - 1].value;
       const bat = calcBatteryInfo(latestVolts);
       currentBatPercent = bat.percent;
       document.getElementById('val-bat').innerText = `${bat.percent} %`;
-      updateDashboardUI(parseFloat(currentTemp), latestVolts);
+      updateDeviceStatus('status-temp', 'status-bat', parseFloat(currentTemp), latestVolts);
       checkThresholdsAndAlert(parseFloat(currentTemp), latestVolts);
     }
-
     if (mainRssi.length > 0) {
       const latestRssi = mainRssi[mainRssi.length - 1].value;
       document.getElementById('val-rssi').innerText = `📶 ${latestRssi} dBm`;
@@ -301,14 +320,27 @@
       document.getElementById('val-last-time').innerText = `最終更新: ${lastTime}`;
     }
 
-    // B. 検証機 UI 更新
+    // B. 2号機 (Pico 2 W) UI 更新
     if (testTemp.length > 0) {
       const val = testTemp[testTemp.length - 1].value;
       document.getElementById('val-test-temp').innerText = `${val.toFixed(2)} °C`;
     }
     if (testVolts.length > 0) {
       const val = testVolts[testVolts.length - 1].value;
-      document.getElementById('val-test-volts').innerText = `${val.toFixed(2)} V`;
+      const bat = calcBatteryInfo(val);
+      document.getElementById('val-test-bat').innerText = `${bat.percent} %`;
+      const tVal = testTemp.length > 0 ? testTemp[testTemp.length - 1].value : NaN;
+      updateDeviceStatus('status-test-temp', 'status-test-bat', tVal, val);
+    }
+    if (testRssi.length > 0) {
+      const val = testRssi[testRssi.length - 1].value;
+      document.getElementById('val-test-rssi').innerText = `📶 ${val} dBm`;
+      const lastTime = new Date(testRssi[testRssi.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+      document.getElementById('val-test-last-time').innerText = `最終更新: ${lastTime}`;
+    } else if (testVolts.length > 0) {
+      // RSSIがない場合は最新の電圧タイムスタンプから最終更新時刻だけセット
+      const lastTime = new Date(testVolts[testVolts.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+      document.getElementById('val-test-last-time').innerText = `最終更新: ${lastTime}`;
     }
 
     // C. グラフ描画
@@ -366,12 +398,12 @@
     return { percent: percent, remainHours: remainHours.toFixed(1) };
   }
 
-  function updateDashboardUI(temp, volts) {
+  function updateDeviceStatus(tempElemId, batElemId, temp, volts) {
     const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
     const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
     const bat = calcBatteryInfo(volts);
 
-    const tempElem = document.getElementById('status-temp');
+    const tempElem = document.getElementById(tempElemId);
     if (!isNaN(temp)) {
       if (temp >= alertTemp) {
         tempElem.innerText = "⚠️ 警告: 庫内温度が高すぎます！";
@@ -385,7 +417,7 @@
       }
     }
 
-    const batElem = document.getElementById('status-bat');
+    const batElem = document.getElementById(batElemId);
     if (!isNaN(volts) && volts > 0) {
       if (bat.percent <= alertBat) {
         batElem.innerText = `🪫 警報: 残量低下 (${volts}V / 約${bat.remainHours}h)`;
@@ -534,7 +566,7 @@
 
   loadSettings();
   fetchAllUbidotsData();
-  writeLog("ダッシュボード（Ubidots API対応版）を初期化しました。");
+  writeLog("ダッシュボード（全レイアウト統一版）を初期化しました。");
   setInterval(fetchAllUbidotsData, 30000);
   setInterval(checkScheduledNotification, 10000);
 </script>
