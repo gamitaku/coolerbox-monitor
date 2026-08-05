@@ -11,11 +11,11 @@ import ota_updater  # Pico内の ota_updater.py を呼び出す
 # ==================================================
 DEVICE_NAME = config.DEVICE_NAME
 
-# 複数AP対応：configにWIFI_AP_LISTがない場合は単一SSIDからフォールバック作成
+# config.py の WIFI_AP_LIST を直接取得（後換性フォールバック付き）
 if hasattr(config, "WIFI_AP_LIST"):
     AP_LIST = config.WIFI_AP_LIST
 else:
-    AP_LIST = [{"ssid": config.WIFI_SSID, "pass": config.WIFI_PASS}]
+    AP_LIST = [{"ssid": getattr(config, "WIFI_SSID", ""), "pass": getattr(config, "WIFI_PASS", "")}]
 
 UBIDOTS_TOKEN = config.UBIDOTS_TOKEN
 
@@ -107,12 +107,15 @@ def read_vsys():
         return None
 
 # ==================================================
-# 4. 高速＆最適Wi-Fi接続制御 (複数AP・判定ロジック組み込み)
+# 4. Wi-Fi接続制御 (複数AP対応・判定ロジック組み込み)
 # ==================================================
 def scan_and_connect_best():
     """ 周辺スキャンを実施し、最強かつ登録済みのAPを選択して接続 """
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
+    
+    # チップ初期化の安定待ち（スキャン空振り防止）
+    time.sleep(1)
     
     try:
         wlan.config(pm=0xa11154) # CYW43 省電力OFF
@@ -126,6 +129,10 @@ def scan_and_connect_best():
         log(f"スキャン失敗: {e}", "エラー")
         return False, None
 
+    if not scanned:
+        log("⚠️ 周囲に2.4GHz帯のWi-Fiが見つかりません（0件検出）", "WARN")
+        return False, None
+
     best_target = None
     best_rssi = -100
 
@@ -135,19 +142,20 @@ def scan_and_connect_best():
         rssi = net[3]
         log(f"  検出: SSID='{ssid}', RSSI={rssi}dBm", "DIAG")
         
+        # config.py の "ssid" / "pass" キーと確実に照合
         for ap in AP_LIST:
-            ap_ssid = ap.get("ssid") or ap.get("SSID")
-            if ssid == ap_ssid and rssi > best_rssi:
+            target_ssid = ap.get("ssid") or ap.get("SSID")
+            if ssid and target_ssid and ssid == target_ssid and rssi > best_rssi:
                 best_rssi = rssi
                 best_target = ap
 
     if best_target:
         target_ssid = best_target.get("ssid") or best_target.get("SSID")
-        target_pass = best_target.get("pass") or best_target.get("WIFI_PASS") or best_target.get("password")
+        target_pass = best_target.get("pass") or best_target.get("PASS")
         
         log(f"🎯 選択AP: '{target_ssid}' (強度: {best_rssi}dBm) に接続試行...", "INFO")
         wlan.disconnect()
-        time.sleep_ms(200)
+        time.sleep_ms(300)
         wlan.connect(target_ssid, target_pass)
 
         timeout = 15
@@ -181,14 +189,12 @@ def send_to_ubidots(payload):
         return None
 
 # ==================================================
-# 5. メイン実行シーケンス (判定・ループ・リセット管理)
+# 5. メイン実行シーケンス
 # ==================================================
 def run_cycle():
     global last_rssi, fail_count
 
     wlan = network.WLAN(network.STA_IF)
-    
-    # 接続確認＆状況に応じた切断判定
     need_reconnect = False
     
     if not wlan.isconnected():
@@ -200,7 +206,7 @@ def run_cycle():
         except Exception:
             current_rssi = -99
 
-        # 条件1: -45 dBm 未満（接続しているが弱すぎる/不通領域）
+        # 条件1: -45 dBm 未満（電波低下）
         if current_rssi < LOW_RSSI_THRESHOLD:
             log(f"📉 電波低下検知 ({current_rssi} dBm < {LOW_RSSI_THRESHOLD} dBm)。再選択を実行します。", "WARN")
             wlan.disconnect()
@@ -224,7 +230,7 @@ def run_cycle():
                 log(f"🛑 {MAX_RETRY}回連続失敗。通信スタックと判断し{COOL_DOWN_MINUTES}分待機後にハードリセットします。", "CRITICAL")
                 time.sleep(COOL_DOWN_MINUTES * 60)
                 log("🔄 15分経過。Picoをハードリセットして再起動します...", "SYSTEM")
-                reset() # Picoをハードリセットして初期化
+                reset()
             return False
         else:
             fail_count = 0
@@ -233,7 +239,7 @@ def run_cycle():
         last_rssi = wlan.status('rssi')
         rssi = last_rssi
 
-    # ★ Wi-Fi確立直後に OTA 自動更新チェック
+    # OTA 自動更新チェック
     try:
         ota_updater.check_and_update()
     except Exception as e:
@@ -279,7 +285,6 @@ def main():
     print(f"  デバイスラベル: {DEVICE_LABEL}")
     print("=" * 50)
     
-    # 周期ループ（1回切り実行の場合でもそのまま機能します）
     run_cycle()
 
 if __name__ == "__main__":
