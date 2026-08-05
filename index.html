@@ -2,193 +2,435 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>📷 保冷BOX・電源ステータス 統合監視ダッシュボード</title>
   <!-- Chart.js（グラフ描画ライブラリ） -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     :root {
-      --bg: #f4f6f9;
+      --bg: #f8fafc;
       --card-bg: #ffffff;
-      --text: #1e293b;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
       --primary: #2563eb;
       --border: #e2e8f0;
+      --radius: 12px;
     }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 15px; }
-    .container { max-width: 950px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }
-    .card { background: var(--card-bg); border-radius: 12px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid var(--border); }
-    h1 { font-size: 1.3rem; margin: 0 0 5px 0; }
-    
-    .device-header { font-size: 1rem; font-weight: bold; color: var(--text); border-bottom: 2px solid var(--primary); padding-bottom: 4px; margin-bottom: 12px; }
 
-    /* カード型グリッド（3列配置） */
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
-    .stat-card { background: #f8fafc; border-radius: 8px; padding: 12px; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
-    .stat-top { display: flex; justify-content: space-between; align-items: flex-start; }
-    .stat-title { font-size: 0.8rem; color: #64748b; }
-    .stat-value { font-size: 1.5rem; font-weight: bold; color: #0f172a; }
-    .stat-sub { font-size: 0.78rem; font-weight: 500; }
-    
-    /* グラフ描画キャンバス領域 */
-    .chart-container { width: 100%; height: 90px; position: relative; cursor: pointer; }
-    
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text-main);
+      margin: 0;
+      padding: 12px;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* ヘッダー */
+    .app-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+    }
+    .app-header h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin: 0;
+      color: var(--text-main);
+    }
+
+    /* デバイスセクション */
+    .device-section {
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      padding: 16px;
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .device-title-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 2px solid var(--primary);
+      padding-bottom: 8px;
+      margin-bottom: 14px;
+    }
+    .device-title {
+      font-size: 1rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* グリッドレイアウト（PCは3列、スマホは1列） */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(1, 1fr);
+      gap: 12px;
+    }
+    @media (min-width: 768px) {
+      .metrics-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
+    /* 指標カード */
+    .stat-card {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      height: 100%;
+    }
+
+    .stat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 6px;
+      min-height: 22px;
+    }
+    .stat-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+
+    /* ステータスバッジ (崩れ防止) */
+    .status-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 12px;
+      white-space: nowrap;
+      display: inline-block;
+      max-width: 140px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .status-badge.ok { background: #dcfce7; color: #15803d; }
+    .status-badge.warn { background: #fef3c7; color: #b45309; }
+    .status-badge.alert { background: #fee2e2; color: #b91c1c; }
+    .status-badge.info { background: #e0f2fe; color: #0369a1; }
+
+    .stat-value {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: var(--text-main);
+      line-height: 1.2;
+      margin-bottom: 8px;
+    }
+    .stat-value span {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-left: 2px;
+    }
+
+    /* グラフ描画エリア */
+    .chart-box {
+      width: 100%;
+      height: 100px;
+      position: relative;
+      cursor: pointer;
+    }
+
     /* モーダル表示 */
-    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 1000; justify-content: center; align-items: center; }
-    .modal-content { background: white; width: 90%; max-width: 800px; height: 60%; border-radius: 12px; padding: 20px; position: relative; display: flex; flex-direction: column; }
-    .close-btn { position: absolute; top: -12px; right: -12px; background: #ef4444; color: white; border-radius: 50%; width: 32px; height: 32px; font-weight: bold; border: none; cursor: pointer; font-size: 1rem; z-index: 1001; }
+    .modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+    }
+    .modal-content {
+      background: white;
+      width: 100%;
+      max-width: 800px;
+      height: 70vh;
+      max-height: 500px;
+      border-radius: var(--radius);
+      padding: 16px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+    .close-btn {
+      position: absolute;
+      top: -12px;
+      right: -12px;
+      background: #ef4444;
+      color: white;
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      font-weight: bold;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
 
-    /* AI 領域 */
-    .ai-box { background: #f0f9ff; border: 1px solid #bae6fd; }
-    .ai-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
-    .btn-ai { background: var(--primary); color: white; border: none; padding: 8px 14px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; cursor: pointer; }
-    .prediction-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 10px; }
-    .pred-card { background: white; padding: 10px 12px; border-radius: 6px; border-left: 4px solid var(--primary); border: 1px solid var(--border); }
+    /* AI 分析エリア */
+    .ai-section {
+      background: #f0f9ff;
+      border: 1px solid #bae6fd;
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+    .ai-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .btn-ai {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-weight: bold;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    .prediction-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .pred-card {
+      background: white;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border-left: 4px solid var(--primary);
+      border: 1px solid var(--border);
+    }
 
     /* 設定エリア */
-    details summary { font-weight: bold; cursor: pointer; padding: 5px 0; color: #475569; user-select: none; }
-    .setting-group { margin-top: 10px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
-    .form-item { display: flex; flex-direction: column; gap: 4px; }
-    .form-item label { font-size: 0.8rem; font-weight: bold; color: #475569; }
-    .form-item input { padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); font-size: 0.85rem; }
-    .btn-save { background: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 12px; }
-    .btn-test { background: #06b6d4; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.8rem; margin-top: 4px; }
-    
-    .log-box { background: #0f172a; color: #38bdf8; font-family: monospace; font-size: 0.75rem; padding: 10px; border-radius: 6px; height: 100px; overflow-y: auto; margin-top: 8px; white-space: pre-wrap; }
+    details summary {
+      font-weight: 700;
+      cursor: pointer;
+      padding: 6px 0;
+      color: var(--text-muted);
+      user-select: none;
+    }
+    .setting-group {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+    }
+    .form-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .form-item label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--text-muted);
+    }
+    .form-item input {
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+    .btn-save {
+      background: #10b981;
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      margin-top: 12px;
+      width: 100%;
+    }
+    .btn-test {
+      background: #06b6d4;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 0.8rem;
+      margin-top: 4px;
+    }
+    .log-box {
+      background: #0f172a;
+      color: #38bdf8;
+      font-family: monospace;
+      font-size: 0.75rem;
+      padding: 10px;
+      border-radius: 6px;
+      height: 90px;
+      overflow-y: auto;
+      margin-top: 8px;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
 
 <div class="container">
-  <h1>📷 保冷BOX・電源ステータス 統合監視</h1>
+  
+  <div class="app-header">
+    <h1>📷 保冷BOX・電源 統合監視</h1>
+  </div>
 
-  <!-- 1. 1号機: 保冷BOX内部 (Pico W) -->
-  <div class="card">
-    <div class="device-header">📍 保冷BOX内部 (Pico W)</div>
-    <div class="grid">
-      
-      <!-- 本機: 温度 -->
+  <!-- 1. 1号機: Pico W -->
+  <div class="device-section">
+    <div class="device-title-bar">
+      <div class="device-title">📍 保冷BOX内部 (Pico W)</div>
+    </div>
+    
+    <div class="metrics-grid">
+      <!-- 温度 -->
       <div class="stat-card">
-        <div class="stat-top">
-          <div>
-            <div class="stat-title">BOX内温度</div>
-            <div class="stat-value" id="val-temp">-- °C</div>
+        <div>
+          <div class="stat-header">
+            <span class="stat-label">BOX内温度</span>
+            <span class="status-badge info" id="status-temp">データ取得中</span>
           </div>
-          <div class="stat-sub" id="status-temp">データ取得中...</div>
+          <div class="stat-value" id="val-temp">-- <span>°C</span></div>
         </div>
-        <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d1', 'BOX内温度推移 (℃)', '#ef4444')">
+        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d1', '1号機: BOX内温度推移 (℃)', '#ef4444')">
           <canvas id="chart-d1"></canvas>
         </div>
       </div>
 
-      <!-- 本機: バッテリー電圧 -->
+      <!-- 電圧 -->
       <div class="stat-card">
-        <div class="stat-top">
-          <div>
-            <div class="stat-title">バッテリー残量 / 電圧</div>
-            <div class="stat-value" id="val-bat">-- %</div>
+        <div>
+          <div class="stat-header">
+            <span class="stat-label">バッテリー残量 / 電圧</span>
+            <span class="status-badge info" id="status-bat">データ取得中</span>
           </div>
-          <div class="stat-sub" id="status-bat">データ取得中...</div>
+          <div class="stat-value" id="val-bat">-- <span>%</span></div>
         </div>
-        <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d2', 'バッテリー電圧推移 (V)', '#3b82f6')">
+        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d2', '1号機: 電圧推移 (V)', '#3b82f6')">
           <canvas id="chart-d2"></canvas>
         </div>
       </div>
 
-      <!-- 本機: 通信ステータス (電波強度) -->
+      <!-- 電波強度 -->
       <div class="stat-card">
-        <div class="stat-top">
-          <div>
-            <div class="stat-title">通信ステータス</div>
-            <div class="stat-value" style="font-size: 1.3rem;" id="val-rssi">📶 -- dBm</div>
+        <div>
+          <div class="stat-header">
+            <span class="stat-label">通信ステータス</span>
+            <span class="status-badge info" id="val-last-time">更新: --:--</span>
           </div>
-          <div class="stat-sub" id="val-last-time" style="color: #64748b;">最終更新: --:--</div>
+          <div class="stat-value" id="val-rssi">-- <span>dBm</span></div>
         </div>
-        <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d3', '電波強度推移 (dBm)', '#8b5cf6')">
+        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d3', '1号機: 電波強度推移 (dBm)', '#8b5cf6')">
           <canvas id="chart-d3"></canvas>
         </div>
       </div>
-
     </div>
   </div>
 
-  <!-- 2. 2号機: 検証機1 (Pico 2 W) -->
-  <div class="card">
-    <div class="device-header" style="border-bottom-color: #ec4899;">🧪 検証機1 (Pico 2 W)</div>
-    <div class="grid">
-      
-      <!-- 検証機: 温度 -->
+  <!-- 2. 2号機: Pico 2 W -->
+  <div class="device-section">
+    <div class="device-title-bar" style="border-bottom-color: #ec4899;">
+      <div class="device-title">🧪 検証機1 (Pico 2 W)</div>
+    </div>
+    
+    <div class="metrics-grid">
+      <!-- 温度 -->
       <div class="stat-card">
-        <div class="stat-top">
-          <div>
-            <div class="stat-title">検証機1 温度</div>
-            <div class="stat-value" id="val-test-temp">-- °C</div>
+        <div>
+          <div class="stat-header">
+            <span class="stat-label">検証機1 温度</span>
+            <span class="status-badge info" id="status-test-temp">データ取得中</span>
           </div>
-          <div class="stat-sub" id="status-test-temp">データ取得中...</div>
+          <div class="stat-value" id="val-test-temp">-- <span>°C</span></div>
         </div>
-        <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d4', '検証機1 温度推移 (℃)', '#ec4899')">
+        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d4', '2号機: 温度推移 (℃)', '#ec4899')">
           <canvas id="chart-d4"></canvas>
         </div>
       </div>
 
-      <!-- 検証機: バッテリー電圧 -->
+      <!-- 電圧 -->
       <div class="stat-card">
-        <div class="stat-top">
-          <div>
-            <div class="stat-title">バッテリー残量 / 電圧</div>
-            <div class="stat-value" id="val-test-bat">-- %</div>
+        <div>
+          <div class="stat-header">
+            <span class="stat-label">バッテリー残量 / 電圧</span>
+            <span class="status-badge info" id="status-test-bat">データ取得中</span>
           </div>
-          <div class="stat-sub" id="status-test-bat">データ取得中...</div>
+          <div class="stat-value" id="val-test-bat">-- <span>%</span></div>
         </div>
-        <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d5', '検証機1 電圧推移 (V)', '#10b981')">
+        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d5', '2号機: 電圧推移 (V)', '#10b981')">
           <canvas id="chart-d5"></canvas>
         </div>
       </div>
 
-      <!-- 検証機: 通信ステータス (電波強度) -->
+      <!-- 電波強度 -->
       <div class="stat-card">
-        <div class="stat-top">
-          <div>
-            <div class="stat-title">通信ステータス</div>
-            <div class="stat-value" style="font-size: 1.3rem;" id="val-test-rssi">📶 -- dBm</div>
+        <div>
+          <div class="stat-header">
+            <span class="stat-label">通信ステータス</span>
+            <span class="status-badge info" id="val-test-last-time">更新: --:--</span>
           </div>
-          <div class="stat-sub" id="val-test-last-time" style="color: #64748b;">最終更新: --:--</div>
+          <div class="stat-value" id="val-test-rssi">-- <span>dBm</span></div>
         </div>
-        <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d6', '検証機1 電波強度推移 (dBm)', '#f59e0b')">
+        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d6', '2号機: 電波強度推移 (dBm)', '#f59e0b')">
           <canvas id="chart-d6"></canvas>
         </div>
       </div>
-
     </div>
   </div>
 
-  <!-- 3. AI メンテナンス予測 & 推奨時刻 -->
-  <div class="card ai-box">
+  <!-- 3. AI 分析 & 予測 -->
+  <div class="ai-section">
     <div class="ai-header">
-      <div style="font-weight:bold; color:#0369a1;">🤖 Gemini AI 状況分析 & メンテナンス推奨時刻</div>
-      <button class="btn-ai" onclick="runAiAnalysis()">最新データでAI分析を更新</button>
+      <div style="font-weight:bold; color:#0369a1; font-size: 0.95rem;">🤖 Gemini AI 状況分析 & 予測</div>
+      <button class="btn-ai" onclick="runAiAnalysis()">AI分析更新</button>
     </div>
-    <div id="ai-response-text" style="font-size:0.85rem; color:#1e293b; line-height:1.4;">
+    <div id="ai-response-text" style="font-size:0.82rem; color:#1e293b; line-height:1.4;">
       データ取得時に、現在の温度・電圧推移から次回交換が必要になる推奨時刻を提示します。
     </div>
 
     <div class="prediction-grid">
       <div class="pred-card" style="border-left-color: #ef4444;">
-        <div style="font-size:0.75rem; color:#64748b;">🔥 35度超え予想時刻</div>
-        <div style="font-size:1.1rem; font-weight:bold; color:#dc2626; margin-top:2px;" id="pred-hot-time">未計算</div>
+        <div style="font-size:0.72rem; color:var(--text-muted);">🔥 35℃超え予想</div>
+        <div style="font-size:1rem; font-weight:bold; color:#dc2626; margin-top:2px;" id="pred-hot-time">未計算</div>
       </div>
       <div class="pred-card" style="border-left-color: #3b82f6;">
-        <div style="font-size:0.75rem; color:#64748b;">🧊 保冷剤交換 推奨時刻</div>
-        <div style="font-size:1.1rem; font-weight:bold; color:#1d4ed8; margin-top:2px;" id="pred-ice-time">未計算</div>
+        <div style="font-size:0.72rem; color:var(--text-muted);">🧊 保冷剤交換推奨</div>
+        <div style="font-size:1rem; font-weight:bold; color:#1d4ed8; margin-top:2px;" id="pred-ice-time">未計算</div>
       </div>
       <div class="pred-card" style="border-left-color: #f59e0b;">
-        <div style="font-size:0.75rem; color:#64748b;">🔋 バッテリー交換 推奨時刻</div>
-        <div style="font-size:1.1rem; font-weight:bold; color:#b45309; margin-top:2px;" id="pred-bat-time">未計算</div>
+        <div style="font-size:0.72rem; color:var(--text-muted);">🔋 バッテリー交換推奨</div>
+        <div style="font-size:1rem; font-weight:bold; color:#b45309; margin-top:2px;" id="pred-bat-time">未計算</div>
       </div>
     </div>
   </div>
 
-  <!-- 4. 設定エリア (折りたたみ) -->
-  <div class="card">
+  <!-- 4. 設定エリア -->
+  <div class="device-section">
     <details>
       <summary>⚙️ システム設定・Ubidotsトークン・LINE通知設定</summary>
       
@@ -206,21 +448,20 @@
           <input type="number" id="cfg-bat-alert" value="20" min="5" max="50">
         </div>
         <div class="form-item">
-          <label>LINE/Webhook 通知先URL (GAS WebアプリURL)</label>
+          <label>LINE Webhook URL (GAS Webアプリ)</label>
           <input type="text" id="cfg-line-webhook" placeholder="https://script.google.com/macros/s/.../exec">
           <button class="btn-test" onclick="testLineNotification()">🚀 LINE通知テスト送信</button>
         </div>
       </div>
 
-      <!-- ログコンソール表示エリア -->
       <div style="margin-top: 12px;">
-        <div style="font-size:0.8rem; font-weight:bold; color:#475569;">📋 システム実行・通信ログ</div>
+        <div style="font-size:0.78rem; font-weight:bold; color:var(--text-muted);">📋 システム実行・通信ログ</div>
         <div class="log-box" id="system-log">[System] ログモニター待機中...\n</div>
       </div>
 
       <hr style="border: 0; border-top: 1px solid var(--border); margin: 15px 0;">
       
-      <div style="font-weight:bold; font-size:0.85rem; color:#475569; margin-bottom:8px;">⏰ LINE定時通知時刻 (1日3箇所設定)</div>
+      <div style="font-weight:bold; font-size:0.82rem; color:var(--text-muted); margin-bottom:8px;">⏰ LINE定時通知時刻 (1日3回)</div>
       <div class="setting-group">
         <div class="form-item">
           <label>通知時刻 1</label>
@@ -240,13 +481,13 @@
     </details>
   </div>
 
-  <footer style="text-align: center; margin-top: 5px; padding: 5px 0; font-size: 0.8rem; color: #64748b;">
-    <a href="./privacy.html" style="color: #64748b; margin-right: 15px;">プライバシーポリシー</a>
-    <a href="./terms.html" style="color: #64748b;">利用規約</a>
+  <footer style="text-align: center; margin: 10px 0; font-size: 0.75rem; color: var(--text-muted);">
+    <a href="./privacy.html" style="color: var(--text-muted); margin-right: 12px;">プライバシーポリシー</a>
+    <a href="./terms.html" style="color: var(--text-muted);">利用規約</a>
   </footer>
 </div>
 
-<!-- 拡大表示用モーダル -->
+<!-- モーダル -->
 <div id="chartModal" class="modal" onclick="closeModal()">
   <div class="modal-content" onclick="event.stopPropagation()">
     <button class="close-btn" onclick="closeModal()">✕</button>
@@ -271,18 +512,15 @@
     logBox.scrollTop = logBox.scrollHeight;
   }
 
-  // Ubidots API からのデータ取得ヘルパー
   async function fetchUbidotsVariable(deviceLabel, variableLabel, token) {
     const url = `https://industrial.api.ubidots.com/api/v1.6/devices/${deviceLabel}/${variableLabel}/values?page_size=20`;
     try {
-      const res = await fetch(url, {
-        headers: { "X-Auth-Token": token }
-      });
+      const res = await fetch(url, { headers: { "X-Auth-Token": token } });
       if (!res.ok) return [];
       const data = await res.json();
       return (data.results || []).reverse();
     } catch (e) {
-      writeLog(`[Ubidots Fetch Error] ${deviceLabel}/${variableLabel}: ` + e.message);
+      writeLog(`[Ubidots Error] ${deviceLabel}/${variableLabel}: ` + e.message);
       return [];
     }
   }
@@ -290,12 +528,12 @@
   async function fetchAllUbidotsData() {
     const token = document.getElementById('cfg-ubidots-token').value.trim() || "BBUS-d7nOyVvjWHEUQfqS9LRVevB6yiTnOe";
     
-    // 1. 本機 (pico-w-main) 取得
+    // 1. 本機 (pico-w-main)
     const mainTemp = await fetchUbidotsVariable("pico-w-main", "temperature", token);
     const mainVolts = await fetchUbidotsVariable("pico-w-main", "vsys_voltage", token);
     const mainRssi = await fetchUbidotsVariable("pico-w-main", "rssi", token);
 
-    // 2. 検証機 (pico-2w-test) 取得
+    // 2. 検証機 (pico-2w-test)
     const testTemp = await fetchUbidotsVariable("pico-2w-test", "temperature", token);
     const testVolts = await fetchUbidotsVariable("pico-2w-test", "vsys_voltage", token);
     const testRssi = await fetchUbidotsVariable("pico-2w-test", "rssi", token);
@@ -307,52 +545,51 @@
     cacheData.d5 = testVolts;
     cacheData.d6 = testRssi;
 
-    // A. 1号機 (Pico W) UI 更新
+    // A. 1号機 (Pico W)
     if (mainTemp.length > 0) {
       const latestTemp = mainTemp[mainTemp.length - 1].value;
       currentTemp = latestTemp.toFixed(2);
-      document.getElementById('val-temp').innerText = `${currentTemp} °C`;
+      document.getElementById('val-temp').innerHTML = `${currentTemp} <span>°C</span>`;
     }
     if (mainVolts.length > 0) {
       const latestVolts = mainVolts[mainVolts.length - 1].value;
       const bat = calcBatteryInfo(latestVolts);
       currentBatPercent = bat.percent;
-      document.getElementById('val-bat').innerText = `${bat.percent} %`;
+      document.getElementById('val-bat').innerHTML = `${bat.percent} <span>% (${latestVolts.toFixed(2)}V)</span>`;
       updateDeviceStatus('status-temp', 'status-bat', parseFloat(currentTemp), latestVolts);
       checkThresholdsAndAlert(parseFloat(currentTemp), latestVolts);
     }
     if (mainRssi.length > 0) {
       const latestRssi = mainRssi[mainRssi.length - 1].value;
-      document.getElementById('val-rssi').innerText = `📶 ${latestRssi} dBm`;
+      document.getElementById('val-rssi').innerHTML = `${latestRssi} <span>dBm</span>`;
       const lastTime = new Date(mainRssi[mainRssi.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-      document.getElementById('val-last-time').innerText = `最終更新: ${lastTime}`;
+      document.getElementById('val-last-time').innerText = `更新: ${lastTime}`;
     }
 
-    // B. 2号機 (Pico 2 W) UI 更新
+    // B. 2号機 (Pico 2 W)
     if (testTemp.length > 0) {
       const val = testTemp[testTemp.length - 1].value;
-      document.getElementById('val-test-temp').innerText = `${val.toFixed(2)} °C`;
+      document.getElementById('val-test-temp').innerHTML = `${val.toFixed(2)} <span>°C</span>`;
     }
     if (testVolts.length > 0) {
       const val = testVolts[testVolts.length - 1].value;
       const bat = calcBatteryInfo(val);
-      document.getElementById('val-test-bat').innerText = `${bat.percent} %`;
+      document.getElementById('val-test-bat').innerHTML = `${bat.percent} <span>% (${val.toFixed(2)}V)</span>`;
       const tVal = testTemp.length > 0 ? testTemp[testTemp.length - 1].value : NaN;
       updateDeviceStatus('status-test-temp', 'status-test-bat', tVal, val);
     }
     if (testRssi.length > 0) {
       const val = testRssi[testRssi.length - 1].value;
-      document.getElementById('val-test-rssi').innerText = `📶 ${val} dBm`;
+      document.getElementById('val-test-rssi').innerHTML = `${val} <span>dBm</span>`;
       const lastTime = new Date(testRssi[testRssi.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-      document.getElementById('val-test-last-time').innerText = `最終更新: ${lastTime}`;
+      document.getElementById('val-test-last-time').innerText = `更新: ${lastTime}`;
     } else if (testVolts.length > 0) {
       const lastTime = new Date(testVolts[testVolts.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-      document.getElementById('val-test-last-time').innerText = `最終更新: ${lastTime}`;
+      document.getElementById('val-test-last-time').innerText = `更新: ${lastTime}`;
     }
 
-    // C. グラフ描画
     renderCharts();
-    writeLog("[Ubidots Direct] データの最新化が完了しました");
+    writeLog("データ最新化完了");
   }
 
   function renderCharts() {
@@ -379,7 +616,7 @@
           label: labelName,
           data: values,
           borderColor: color,
-          backgroundColor: color + '20',
+          backgroundColor: color + '15',
           borderWidth: 2,
           pointRadius: 2,
           fill: true,
@@ -391,8 +628,8 @@
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
         scales: {
-          x: { display: true, ticks: { font: { size: 9 } } },
-          y: { display: true, ticks: { font: { size: 9 } } }
+          x: { display: true, ticks: { font: { size: 9 }, color: '#94a3b8' }, grid: { display: false } },
+          y: { display: true, ticks: { font: { size: 9 }, color: '#94a3b8' }, grid: { color: '#f1f5f9' } }
         }
       }
     });
@@ -415,28 +652,28 @@
     const tempElem = document.getElementById(tempElemId);
     if (!isNaN(temp)) {
       if (temp >= alertTemp) {
-        tempElem.innerText = "⚠️ 警告: 庫内温度が高すぎます！";
-        tempElem.style.color = "#dc2626";
+        tempElem.innerText = "⚠️ 高温警告";
+        tempElem.className = "status-badge alert";
       } else if (temp >= alertTemp - 2.0) {
-        tempElem.innerText = "⚡ 注意: 庫内温度が上昇中";
-        tempElem.style.color = "#d97706";
+        tempElem.innerText = "⚡ 温度上昇中";
+        tempElem.className = "status-badge warn";
       } else {
-        tempElem.innerText = "❄️ 正常: ひんやり良好";
-        tempElem.style.color = "#059669";
+        tempElem.innerText = "❄️ 正常";
+        tempElem.className = "status-badge ok";
       }
     }
 
     const batElem = document.getElementById(batElemId);
     if (!isNaN(volts) && volts > 0) {
       if (bat.percent <= alertBat) {
-        batElem.innerText = `🪫 警報: 残量低下 (${volts}V / 約${bat.remainHours}h)`;
-        batElem.style.color = "#dc2626";
+        batElem.innerText = "🪫 残量低下";
+        batElem.className = "status-badge alert";
       } else if (bat.percent < 40) {
-        batElem.innerText = `⚠️ 注意: 交換準備推奨 (${volts}V / 約${bat.remainHours}h)`;
-        batElem.style.color = "#d97706";
+        batElem.innerText = "⚠️ 交換準備推奨";
+        batElem.className = "status-badge warn";
       } else {
-        batElem.innerText = `🔋 良好: 残量十分 (${volts}V / 約${bat.remainHours}h)`;
-        batElem.style.color = "#059669";
+        batElem.innerText = "🔋 残量十分";
+        batElem.className = "status-badge ok";
       }
     }
   }
@@ -520,7 +757,7 @@
     localStorage.setItem('cfg_time_1', document.getElementById('cfg-time-1').value);
     localStorage.setItem('cfg_time_2', document.getElementById('cfg-time-2').value);
     localStorage.setItem('cfg_time_3', document.getElementById('cfg-time-3').value);
-    writeLog("設定を保存しました。");
+    writeLog("設定保存完了");
     alert('設定を保存しました！');
   }
 
@@ -575,7 +812,7 @@
 
   loadSettings();
   fetchAllUbidotsData();
-  writeLog("ダッシュボード（電波強度グラフ追加版）を初期化しました。");
+  writeLog("ダッシュボード（スマホ最適化・レイアウト完成版）初期化完了");
   setInterval(fetchAllUbidotsData, 30000);
   setInterval(checkScheduledNotification, 10000);
 </script>
