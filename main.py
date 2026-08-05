@@ -112,25 +112,35 @@ def read_vsys():
 def scan_and_connect_best():
     """ 周辺スキャンを実施し、登録済みAPを電波強度順に試行して接続 """
     wlan = network.WLAN(network.STA_IF)
-    wlan.active(True)
     
-    # チップ初期化の安定待ち
+    # 💡 対策1: チップの強制再初期化 (soft reboot対策)
+    wlan.active(False)
+    time.sleep_ms(500)
+    wlan.active(True)
     time.sleep(1)
     
     try:
-        wlan.config(pm=0xa11154) # CYW43 省電力OFF
+        wlan.config(pm=0xa11154) # CYW43 省電力OFF (パフォーマンス優先)
     except Exception:
         pass
 
     log("🔍 周辺Wi-Fiスキャン中...", "DIAG")
-    try:
-        scanned = wlan.scan()
-    except Exception as e:
-        log(f"スキャン失敗: {e}", "エラー")
-        return False, None
+    
+    # 💡 対策2: スキャンの自動リトライ (最大3回)
+    scanned = []
+    for retry in range(1, 4):
+        try:
+            scanned = wlan.scan()
+            if scanned:
+                break
+            log(f"⚠️ スキャン結果が空です。再試行中... ({retry}/3)", "WARN")
+            time.sleep(1)
+        except Exception as e:
+            log(f"スキャン例外発生: {e}", "エラー")
+            time.sleep(1)
 
     if not scanned:
-        log("⚠️ 周囲に2.4GHz帯のWi-Fiが見つかりません（0件検出）", "WARN")
+        log("❌ 周囲に2.4GHz帯のWi-Fiが見つかりません（3回試行失敗）", "WARN")
         return False, None
 
     # スキャン結果から「登録済みAP」のみを抽出
@@ -164,7 +174,6 @@ def scan_and_connect_best():
 
         log(f"🎯 [試行 {idx}/{len(candidate_aps)}] 選択AP: '{target_ssid}' (強度: {target_rssi}dBm) に接続試行...", "INFO")
         
-        # 明示的な切断とウェイト（CYW43ハング防止）
         wlan.disconnect()
         time.sleep(1)
         
@@ -174,7 +183,7 @@ def scan_and_connect_best():
         timeout = 15
         while timeout > 0:
             status = wlan.status()
-            # isconnected() か status == 3 (CYW43のSTAT_GOT_IP) で成功判定
+            # isconnected() か status == 3 (STAT_GOT_IP) で成功判定
             if wlan.isconnected() or status == 3:
                 ifconfig = wlan.ifconfig()
                 log(f"✅ Wi-Fi接続成功! IP: {ifconfig[0]}, GW: {ifconfig[2]}", "INFO")
