@@ -29,7 +29,7 @@
     .stat-value { font-size: 1.6rem; font-weight: bold; color: #0f172a; }
     .stat-sub { font-size: 0.78rem; font-weight: 500; }
     
-    /* 自前グラフ描画キャンバス領域 */
+    /* グラフ描画キャンバス領域 */
     .chart-container { width: 100%; height: 90px; position: relative; cursor: pointer; }
 
     /* 検証機用コンパクト配置 */
@@ -38,7 +38,6 @@
     /* モーダル表示 */
     .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); z-index: 1000; justify-content: center; align-items: center; }
     .modal-content { background: white; width: 90%; max-width: 800px; height: 60%; border-radius: 12px; padding: 20px; position: relative; display: flex; flex-direction: column; }
-    .modal-content canvas { width: 100% !important; height: 100% !important; }
     .close-btn { position: absolute; top: -12px; right: -12px; background: #ef4444; color: white; border-radius: 50%; width: 32px; height: 32px; font-weight: bold; border: none; cursor: pointer; font-size: 1rem; z-index: 1001; }
 
     /* AI 領域 */
@@ -46,7 +45,7 @@
     .ai-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; flex-wrap: wrap; gap: 8px; }
     .btn-ai { background: var(--primary); color: white; border: none; padding: 8px 14px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; cursor: pointer; }
     .prediction-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 10px; }
-    .pred-card { background: white; padding: 10px 12px; border-radius: 6px; border-left: 4px solid var(--primary); border: 1px solid var(--border); border-left-width: 4px; }
+    .pred-card { background: white; padding: 10px 12px; border-radius: 6px; border-left: 4px solid var(--primary); border: 1px solid var(--border); }
 
     /* 設定エリア */
     details summary { font-weight: bold; cursor: pointer; padding: 5px 0; color: #475569; user-select: none; }
@@ -70,7 +69,7 @@
     <div class="device-header">📍 保冷BOX内部 (Pico W)</div>
     <div class="grid">
       
-      <!-- d1: 温度 -->
+      <!-- 本機: 温度 -->
       <div class="stat-card">
         <div class="stat-top">
           <div>
@@ -84,7 +83,7 @@
         </div>
       </div>
 
-      <!-- d2: バッテリー電圧 -->
+      <!-- 本機: バッテリー電圧 -->
       <div class="stat-card">
         <div class="stat-top">
           <div>
@@ -117,13 +116,15 @@
     <div class="device-header">🧪 検証機1 (Pico 2 W)</div>
     <div class="mini-device-grid">
       <div class="stat-card">
-        <div class="stat-title">検証機1 温度推移 (d4)</div>
+        <div class="stat-title">検証機1 温度推移</div>
+        <div style="font-size: 1.2rem; font-weight: bold; margin: 4px 0;" id="val-test-temp">-- °C</div>
         <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d4', '検証機1 温度推移 (℃)', '#ec4899')">
           <canvas id="chart-d4"></canvas>
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-title">検証機1 電圧推移 (d5)</div>
+        <div class="stat-title">検証機1 電圧推移</div>
+        <div style="font-size: 1.2rem; font-weight: bold; margin: 4px 0;" id="val-test-volts">-- V</div>
         <div class="chart-container" title="タップで拡大表示" onclick="openModal('chart-d5', '検証機1 電圧推移 (V)', '#10b981')">
           <canvas id="chart-d5"></canvas>
         </div>
@@ -138,7 +139,7 @@
       <button class="btn-ai" onclick="runAiAnalysis()">最新データでAI分析を更新</button>
     </div>
     <div id="ai-response-text" style="font-size:0.85rem; color:#1e293b; line-height:1.4;">
-      データ取得時に、現在の温度・電圧推移からAIが次回交換が必要になる推奨時刻を自動計算して提示します。
+      データ取得時に、現在の温度・電圧推移から次回交換が必要になる推奨時刻を提示します。
     </div>
 
     <div class="prediction-grid">
@@ -160,9 +161,13 @@
   <!-- 4. 設定エリア (折りたたみ) -->
   <div class="card">
     <details>
-      <summary>⚙️ システム設定・アラート閾値・LINE定時通知設定</summary>
+      <summary>⚙️ システム設定・Ubidotsトークン・LINE通知設定</summary>
       
       <div class="setting-group">
+        <div class="form-item">
+          <label>Ubidots API Token</label>
+          <input type="text" id="cfg-ubidots-token" placeholder="BBUS-...">
+        </div>
         <div class="form-item">
           <label>温度上限アラート閾値 (°C)</label>
           <input type="number" id="cfg-temp-alert" value="15.0" step="0.5">
@@ -170,10 +175,6 @@
         <div class="form-item">
           <label>バッテリー残量下限アラート閾値 (%)</label>
           <input type="number" id="cfg-bat-alert" value="20" min="5" max="50">
-        </div>
-        <div class="form-item">
-          <label>Gemini API キー (ブラウザ保存・予備)</label>
-          <input type="password" id="cfg-api-key" placeholder="AIキーを入力">
         </div>
         <div class="form-item">
           <label>LINE/Webhook 通知先URL (GAS WebアプリURL)</label>
@@ -227,9 +228,8 @@
 </div>
 
 <script>
-  // グローバル状態保持
   let chartD1, chartD2, chartD4, chartD5, modalChart;
-  let chartRawHistory = []; // 最新20件のRAW履歴キャッシュ
+  let cacheData = { d1: [], d2: [], d4: [], d5: [] };
   let currentTemp = "--";
   let currentBatPercent = "--";
   let predIceTime = "まだ未計算だよ";
@@ -245,133 +245,90 @@
     logBox.scrollTop = logBox.scrollHeight;
   }
 
-  // モーダル管理（拡大グラフ表示）
-  function openModal(targetCanvasId, title, color) {
-    if (!chartRawHistory || chartRawHistory.length === 0) return;
-
-    const keyMap = { 'chart-d1': 'd1', 'chart-d2': 'd2', 'chart-d4': 'd4', 'chart-d5': 'd5' };
-    const dataKey = keyMap[targetCanvasId];
-
-    const labels = chartRawHistory.map(item => {
-      const d = new Date(item.created);
-      return d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-    });
-    const dataPoints = chartRawHistory.map(item => item[dataKey] !== undefined ? item[dataKey] : null);
-
-    document.getElementById('chartModal').style.display = 'flex';
-    
-    const ctx = document.getElementById('modalCanvas').getContext('2d');
-    if (modalChart) modalChart.destroy();
-
-    modalChart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: title,
-          data: dataPoints,
-          borderColor: color,
-          backgroundColor: color + '20',
-          borderWidth: 3,
-          pointRadius: 4,
-          fill: true,
-          tension: 0.3
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: true } },
-        scales: {
-          x: { display: true },
-          y: { display: true }
-        }
-      }
-    });
-  }
-
-  function closeModal() {
-    document.getElementById('chartModal').style.display = 'none';
-    if (modalChart) {
-      modalChart.destroy();
-      modalChart = null;
-    }
-  }
-
-  // 1. リードキーで過去20件のデータを取得し、Chart.jsで描画
-  async function fetchAmbientData() {
-    const readKey = "db63a7f0c9718b60";
-    const channelId = "102675";
-    const webhookUrl = document.getElementById('cfg-line-webhook').value.trim();
-    let fetchedSuccess = false;
-
-    // A. GAS経由での優先取得（AI予測などのレスポンス情報が含まれる場合）
-    if (webhookUrl) {
-      try {
-        const gasBaseUrl = webhookUrl.split('?')[0];
-        const targetUrl = `${gasBaseUrl}?action=getData`;
-        const res = await fetch(targetUrl);
-        if (res.ok) {
-          const data = await res.json();
-          if (!data.error && data.temp !== undefined) {
-            applyDataToUI(data.temp, data.volts, data.batPercent, data.wifi, data.over35Time, data.aiAdvice);
-            fetchedSuccess = true;
-            writeLog(`[GAS Data] 取得成功: 温度 ${data.temp}℃ / 電圧 ${data.volts}V`);
-          }
-        }
-      } catch (err) {
-        writeLog("[GAS Fetch Error] GAS経由取得失敗: " + err.message);
-      }
-    }
-
-    // B. Ambient リードキーによる直接時系列取得 (リードキー対応)
+  // Ubidots API からのデータ取得ヘルパー
+  async function fetchUbidotsVariable(deviceLabel, variableLabel, token) {
+    const url = `https://industrial.api.ubidots.com/api/v1.6/devices/${deviceLabel}/${variableLabel}/values?page_size=20`;
     try {
-      const readUrl = `https://ambidata.io/api/v2/channels/${channelId}/data?readKey=${readKey}&n=20`;
-      const res = await fetch(readUrl);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const rawData = await res.json();
-
-      if (Array.isArray(rawData) && rawData.length > 0) {
-        // 古い順にソート
-        chartRawHistory = rawData.reverse();
-        
-        const labels = chartRawHistory.map(item => {
-          const d = new Date(item.created);
-          return d.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-        });
-
-        // 各データ系列を抽出
-        const dataD1 = chartRawHistory.map(item => item.d1 !== undefined ? item.d1 : null);
-        const dataD2 = chartRawHistory.map(item => item.d2 !== undefined ? item.d2 : null);
-        const dataD4 = chartRawHistory.map(item => item.d4 !== undefined ? item.d4 : null);
-        const dataD5 = chartRawHistory.map(item => item.d5 !== undefined ? item.d5 : null);
-
-        // 自前グラフを描画/更新
-        chartD1 = createChart('chart-d1', labels, dataD1, 'BOX内温度 (℃)', '#ef4444', chartD1);
-        chartD2 = createChart('chart-d2', labels, dataD2, '電圧 (V)', '#3b82f6', chartD2);
-        chartD4 = createChart('chart-d4', labels, dataD4, '検証機1 温度 (℃)', '#ec4899', chartD4);
-        chartD5 = createChart('chart-d5', labels, dataD5, '検証機1 電圧 (V)', '#10b981', chartD5);
-
-        // GAS未経由時のフォールバックUI更新
-        if (!fetchedSuccess) {
-          const latest = chartRawHistory[chartRawHistory.length - 1];
-          const tempVal = latest.d1 !== undefined ? latest.d1 : "--";
-          const voltsVal = latest.d2 !== undefined ? latest.d2 : 0;
-          const batInfo = calcBatteryInfo(parseFloat(voltsVal));
-
-          applyDataToUI(tempVal, voltsVal, batInfo.percent, null, null, null);
-          writeLog(`[Ambient Direct] リードキー直接取得・グラフ更新成功 (${rawData.length}件)`);
-        }
-      }
-    } catch (err) {
-      writeLog("[Ambient Direct Error] 直接取得失敗: " + err.message);
+      const res = await fetch(url, {
+        headers: { "X-Auth-Token": token }
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return (data.results || []).reverse(); // 古い順に並び替え
+    } catch (e) {
+      writeLog(`[Ubidots Fetch Error] ${deviceLabel}/${variableLabel}: ` + e.message);
+      return [];
     }
   }
 
-  // Chart.js インスタンス作成用ヘルパー
-  function createChart(canvasId, labels, dataPoints, labelName, color, existingChart) {
+  async function fetchAllUbidotsData() {
+    const token = document.getElementById('cfg-ubidots-token').value.trim() || "BBUS-d7nOyVvjWHEUQfqS9LRVevB6yiTnOe";
+    
+    // 1. 本機 (pico-w-main) 取得
+    const mainTemp = await fetchUbidotsVariable("pico-w-main", "temperature", token);
+    const mainVolts = await fetchUbidotsVariable("pico-w-main", "vsys_voltage", token);
+    const mainRssi = await fetchUbidotsVariable("pico-w-main", "rssi", token);
+
+    // 2. 検証機 (pico-2w-test) 取得
+    const testTemp = await fetchUbidotsVariable("pico-2w-test", "temperature", token);
+    const testVolts = await fetchUbidotsVariable("pico-2w-test", "vsys_voltage", token);
+
+    cacheData.d1 = mainTemp;
+    cacheData.d2 = mainVolts;
+    cacheData.d4 = testTemp;
+    cacheData.d5 = testVolts;
+
+    // A. 本機 UI 更新
+    if (mainTemp.length > 0) {
+      const latestTemp = mainTemp[mainTemp.length - 1].value;
+      currentTemp = latestTemp.toFixed(2);
+      document.getElementById('val-temp').innerText = `${currentTemp} °C`;
+    }
+    
+    if (mainVolts.length > 0) {
+      const latestVolts = mainVolts[mainVolts.length - 1].value;
+      const bat = calcBatteryInfo(latestVolts);
+      currentBatPercent = bat.percent;
+      document.getElementById('val-bat').innerText = `${bat.percent} %`;
+      updateDashboardUI(parseFloat(currentTemp), latestVolts);
+      checkThresholdsAndAlert(parseFloat(currentTemp), latestVolts);
+    }
+
+    if (mainRssi.length > 0) {
+      const latestRssi = mainRssi[mainRssi.length - 1].value;
+      document.getElementById('val-rssi').innerText = `📶 ${latestRssi} dBm`;
+      const lastTime = new Date(mainRssi[mainRssi.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+      document.getElementById('val-last-time').innerText = `最終更新: ${lastTime}`;
+    }
+
+    // B. 検証機 UI 更新
+    if (testTemp.length > 0) {
+      const val = testTemp[testTemp.length - 1].value;
+      document.getElementById('val-test-temp').innerText = `${val.toFixed(2)} °C`;
+    }
+    if (testVolts.length > 0) {
+      const val = testVolts[testVolts.length - 1].value;
+      document.getElementById('val-test-volts').innerText = `${val.toFixed(2)} V`;
+    }
+
+    // C. グラフ描画
+    renderCharts();
+    writeLog("[Ubidots Direct] データの最新化が完了しました");
+  }
+
+  function renderCharts() {
+    chartD1 = drawSingleChart('chart-d1', cacheData.d1, 'BOX内温度 (℃)', '#ef4444', chartD1);
+    chartD2 = drawSingleChart('chart-d2', cacheData.d2, '電圧 (V)', '#3b82f6', chartD2);
+    chartD4 = drawSingleChart('chart-d4', cacheData.d4, '検証機1 温度 (℃)', '#ec4899', chartD4);
+    chartD5 = drawSingleChart('chart-d5', cacheData.d5, '検証機1 電圧 (V)', '#10b981', chartD5);
+  }
+
+  function drawSingleChart(canvasId, seriesData, labelName, color, existingChart) {
     const ctx = document.getElementById(canvasId).getContext('2d');
     if (existingChart) existingChart.destroy();
+
+    const labels = seriesData.map(item => new Date(item.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }));
+    const values = seriesData.map(item => item.value);
 
     return new Chart(ctx, {
       type: 'line',
@@ -379,7 +336,7 @@
         labels: labels,
         datasets: [{
           label: labelName,
-          data: dataPoints,
+          data: values,
           borderColor: color,
           backgroundColor: color + '20',
           borderWidth: 2,
@@ -400,47 +357,6 @@
     });
   }
 
-  function applyDataToUI(temp, volts, batPercent, wifi, over35Time, aiAdvice) {
-    currentTemp = temp;
-    currentBatPercent = batPercent;
-
-    const nowTime = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-    document.getElementById('val-temp').innerText = `${temp} °C`;
-    document.getElementById('val-bat').innerText = `${batPercent} %`;
-
-    const parsedVolts = parseFloat(volts);
-    const parsedTemp = parseFloat(temp);
-
-    if (wifi) {
-      document.getElementById('val-rssi').innerText = `📶 ${wifi.text || '--'}`;
-    }
-    document.getElementById('val-last-time').innerText = `最終更新: ${nowTime}`;
-
-    if (over35Time) {
-      predHotTime = over35Time;
-      document.getElementById('pred-hot-time').innerText = predHotTime;
-    }
-
-    if (aiAdvice) {
-      if (aiAdvice.ice) {
-        predIceTime = aiAdvice.ice;
-        document.getElementById('pred-ice-time').innerText = predIceTime;
-      }
-      if (aiAdvice.battery) {
-        predBatTime = aiAdvice.battery;
-        document.getElementById('pred-bat-time').innerText = predBatTime;
-      }
-      if (aiAdvice.iceStatus) {
-        document.getElementById('ai-response-text').innerText = `【AI診断】🧊保冷剤: ${aiAdvice.iceStatus} / 🔋バッテリー: ${aiAdvice.batStatus}`;
-      }
-    }
-
-    updateDashboardUI(parsedTemp, parsedVolts);
-    checkThresholdsAndAlert(parsedTemp, parsedVolts);
-  }
-
-  // 2. バッテリー残量 & 計算ロジック
   function calcBatteryInfo(volts) {
     if (isNaN(volts) || volts <= 0) return { percent: 0, remainHours: "0.0" };
     let percent = Math.round(((volts - 3.2) / (4.2 - 3.2)) * 100);
@@ -455,7 +371,6 @@
     const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
     const bat = calcBatteryInfo(volts);
 
-    // 温度表示コメント
     const tempElem = document.getElementById('status-temp');
     if (!isNaN(temp)) {
       if (temp >= alertTemp) {
@@ -468,12 +383,8 @@
         tempElem.innerText = "❄️ 正常: ひんやり良好";
         tempElem.style.color = "#059669";
       }
-    } else {
-      tempElem.innerText = "データなし";
-      tempElem.style.color = "#64748b";
     }
 
-    // バッテリー表示コメント
     const batElem = document.getElementById('status-bat');
     if (!isNaN(volts) && volts > 0) {
       if (bat.percent <= alertBat) {
@@ -486,13 +397,9 @@
         batElem.innerText = `🔋 良好: 残量十分 (${volts}V / 約${bat.remainHours}h)`;
         batElem.style.color = "#059669";
       }
-    } else {
-      batElem.innerText = "データなし";
-      batElem.style.color = "#64748b";
     }
   }
 
-  // 3. アラート判定 & LINE通知
   function checkThresholdsAndAlert(temp, volts) {
     const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
     const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
@@ -504,35 +411,60 @@
     const lastTempAlert = localStorage.getItem('state_last_temp_alert') === 'true';
     const lastBatAlert = localStorage.getItem('state_last_bat_alert') === 'true';
 
-    const isNewTempAlert = isTempAlert && !lastTempAlert;
-    const isNewBatAlert = isBatAlert && !lastBatAlert;
-
     localStorage.setItem('state_last_temp_alert', isTempAlert);
     localStorage.setItem('state_last_bat_alert', isBatAlert);
 
-    if (isNewTempAlert || isNewBatAlert) {
-      writeLog("⚠️ アラート発生！LINEメッセージを送信します。");
-      
+    if ((isTempAlert && !lastTempAlert) || (isBatAlert && !lastBatAlert)) {
       let alertMsg = `🚨【保冷BOX アラート発報】🚨\n\n`;
-      if (isTempAlert) {
-        alertMsg += `🌡️ BOX内温度が上昇しています！\n現在の温度: ${temp}℃ (設定閾値: ${alertTemp}℃)\n👉 保冷剤の交換を行ってください。🧊\n\n`;
-      }
-      if (isBatAlert) {
-        alertMsg += `🔋 バッテリー残量が減少しています！\n現在の残量: ${bat.percent}% (${volts}V)\n👉 充電またはバッテリー交換を行ってください。⚡\n\n`;
-      }
-      alertMsg += `カメラ機材保護のためご対応をお願いします。📷`;
-
+      if (isTempAlert) alertMsg += `🌡️ BOX内温度: ${temp}℃ (閾値: ${alertTemp}℃)\n👉 保冷剤の交換を行ってください。🧊\n\n`;
+      if (isBatAlert) alertMsg += `🔋 バッテリー残量: ${bat.percent}% (${volts}V)\n👉 充電または交換を行ってください。⚡\n\n`;
       sendLineMessage(alertMsg);
-    } else if (isTempAlert || isBatAlert) {
-      writeLog("[Alert Skip] アラート状態継続中（重複のため送信スキップ）");
     }
   }
 
-  // 4. 設定読み込み・保存
+  function openModal(targetCanvasId, title, color) {
+    const keyMap = { 'chart-d1': 'd1', 'chart-d2': 'd2', 'chart-d4': 'd4', 'chart-d5': 'd5' };
+    const seriesData = cacheData[keyMap[targetCanvasId]] || [];
+    if (seriesData.length === 0) return;
+
+    document.getElementById('chartModal').style.display = 'flex';
+    const ctx = document.getElementById('modalCanvas').getContext('2d');
+    if (modalChart) modalChart.destroy();
+
+    const labels = seriesData.map(item => new Date(item.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }));
+    const values = seriesData.map(item => item.value);
+
+    modalChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: title,
+          data: values,
+          borderColor: color,
+          backgroundColor: color + '20',
+          borderWidth: 3,
+          pointRadius: 4,
+          fill: true,
+          tension: 0.3
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false
+      }
+    });
+  }
+
+  function closeModal() {
+    document.getElementById('chartModal').style.display = 'none';
+    if (modalChart) { modalChart.destroy(); modalChart = null; }
+  }
+
   function loadSettings() {
+    document.getElementById('cfg-ubidots-token').value = localStorage.getItem('cfg_ubidots_token') || "BBUS-d7nOyVvjWHEUQfqS9LRVevB6yiTnOe";
     document.getElementById('cfg-temp-alert').value = localStorage.getItem('cfg_temp_alert') || "15.0";
     document.getElementById('cfg-bat-alert').value = localStorage.getItem('cfg_bat_alert') || "20";
-    document.getElementById('cfg-api-key').value = localStorage.getItem('cfg_api_key') || "";
     document.getElementById('cfg-line-webhook').value = localStorage.getItem('cfg_line_webhook') || "";
     document.getElementById('cfg-time-1').value = localStorage.getItem('cfg_time_1') || "08:00";
     document.getElementById('cfg-time-2').value = localStorage.getItem('cfg_time_2') || "12:00";
@@ -540,9 +472,9 @@
   }
 
   function saveSettings() {
+    localStorage.setItem('cfg_ubidots_token', document.getElementById('cfg-ubidots-token').value);
     localStorage.setItem('cfg_temp_alert', document.getElementById('cfg-temp-alert').value);
     localStorage.setItem('cfg_bat_alert', document.getElementById('cfg-bat-alert').value);
-    localStorage.setItem('cfg-api-key', document.getElementById('cfg-api-key').value);
     localStorage.setItem('cfg_line_webhook', document.getElementById('cfg-line-webhook').value);
     localStorage.setItem('cfg_time_1', document.getElementById('cfg-time-1').value);
     localStorage.setItem('cfg_time_2', document.getElementById('cfg-time-2').value);
@@ -551,11 +483,9 @@
     alert('設定を保存しました！');
   }
 
-  // 5. AI 分析 & 定時LINE送信
   async function runAiAnalysis() {
-    writeLog("最新データを再取得してAI分析を反映します...");
-    await fetchAmbientData();
-    alert("最新の予測データを反映しました！");
+    await fetchAllUbidotsData();
+    alert("最新のデータを反映しました！");
   }
 
   function buildCuteLineMessage() {
@@ -563,19 +493,12 @@
            `現在の状態をお知らせします🤖\n\n` +
            `🌡️ BOX内温度：${currentTemp} ℃\n` +
            `🔋 バッテリー：${currentBatPercent} %\n\n` +
-           `🔻 メンテナンス予測時刻👇\n` +
-           `🔥 35度超え予想 ➔ ${predHotTime}\n` +
-           `🧊 保冷剤交換目安 ➔ ${predIceTime}\n` +
-           `⚡ バッテリー充電目安 ➔ ${predBatTime}\n\n` +
            `引き続き監視を継続します📷✨`;
   }
 
   async function sendLineMessage(msg) {
     const webhookUrl = document.getElementById('cfg-line-webhook').value.trim();
-    if (!webhookUrl) {
-      writeLog("❌ エラー: Webhook URLが未設定です。");
-      return;
-    }
+    if (!webhookUrl) return;
 
     try {
       await fetch(webhookUrl, {
@@ -591,9 +514,7 @@
   }
 
   function testLineNotification() {
-    const msg = buildCuteLineMessage();
-    writeLog("テスト送信を開始します...");
-    sendLineMessage(msg);
+    sendLineMessage(buildCuteLineMessage());
   }
 
   function checkScheduledNotification() {
@@ -607,16 +528,14 @@
 
     if (currentHHMM === t1 || currentHHMM === t2 || currentHHMM === t3) {
       lastNotifiedMinute = currentHHMM;
-      writeLog(`定時通知時刻 (${currentHHMM}) のため送信します。`);
       sendLineMessage(buildCuteLineMessage());
     }
   }
 
-  // 初期化実行
   loadSettings();
-  fetchAmbientData();
-  writeLog("ダッシュボード（全機能・リードキー描画対応）を初期化しました。");
-  setInterval(fetchAmbientData, 30000);
+  fetchAllUbidotsData();
+  writeLog("ダッシュボード（Ubidots API対応版）を初期化しました。");
+  setInterval(fetchAllUbidotsData, 30000);
   setInterval(checkScheduledNotification, 10000);
 </script>
 </body>
