@@ -114,11 +114,10 @@ def scan_and_connect_best():
     """ 周辺スキャンを実施し、登録済みAPを電波強度順に試行して接続 """
     wlan = network.WLAN(network.STA_IF)
     
-    # CYW43チップ強制リセット
-    wlan.active(False)
-    time.sleep_ms(300)
-    wlan.active(True)
-    time.sleep(1)
+    # CYW43ハング防止：すでに有効な場合は再有効化を行わない
+    if not wlan.active():
+        wlan.active(True)
+        time.sleep_ms(500)
     
     try:
         wlan.config(pm=0xa11154) # 省電力OFF (パフォーマンス優先)
@@ -133,7 +132,8 @@ def scan_and_connect_best():
             if scanned:
                 break
             time.sleep(1)
-        except Exception:
+        except Exception as e:
+            log(f"スキャン一時失敗 (retry {retry}): {e}", "DEBUG")
             time.sleep(1)
 
     if not scanned:
@@ -171,7 +171,7 @@ def scan_and_connect_best():
         log(f"🎯 選択AP ({idx}/{len(candidate_aps)}): '{target_ssid}' ({target_rssi}dBm) 接続試行...", "INFO")
         
         wlan.disconnect()
-        time.sleep(1)
+        time.sleep_ms(500)
         wlan.connect(target_ssid, target_pass)
 
         timeout = 15
@@ -358,11 +358,11 @@ def run_one_cycle(is_first_run=False):
         if payload:
             save_to_buffer(payload)
             
-    # 6. 切断
+    # 6. 切断 (CYW43フリーズ防止のため active(False) は呼ばず disconnect のみ)
     try:
         wlan = network.WLAN(network.STA_IF)
-        wlan.disconnect()
-        wlan.active(False)
+        if wlan.isconnected():
+            wlan.disconnect()
     except Exception:
         pass
 
