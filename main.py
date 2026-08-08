@@ -2,6 +2,7 @@ import network
 import time
 import json
 import os
+import machine
 from machine import Pin, ADC
 import onewire, ds18x20
 import urequests
@@ -13,15 +14,15 @@ import config  # ★ config.py を読み込み
 DEVICE_NAME = config.DEVICE_NAME
 UBIDOTS_TOKEN = config.UBIDOTS_TOKEN
 BUFFER_FILE = "unsent_buffer.json"  # 未送信データ保持用ファイル
-MAX_BUFFER_SIZE = 500              # 最大バッファ件数（Flash圧迫防止）
+MAX_BUFFER_SIZE = 500              # 最大バッファ件数
 INTERVAL_SEC = 300                 # 5分（300秒）周期
 
 # --------------------------------------------------
 # config.py から APリストを柔軟に自動取得
+# (WIFI_AP_LIST / AP_LIST / WIFI_SSID のいずれにも対応)
 # --------------------------------------------------
 AP_LIST = getattr(config, "WIFI_AP_LIST", None) or getattr(config, "AP_LIST", None)
 if not AP_LIST:
-    # 単一AP設定（WIFI_SSID）の場合のフォールバック処理
     wifi_ssid = getattr(config, "WIFI_SSID", None)
     wifi_pass = getattr(config, "WIFI_PASS", None)
     if wifi_ssid and wifi_pass:
@@ -113,7 +114,7 @@ def scan_and_connect_best():
     """ 周辺スキャンを実施し、登録済みAPを電波強度順に試行して接続 """
     wlan = network.WLAN(network.STA_IF)
     
-    # CYW43チップ強制リセット (soft reboot時のハング対策)
+    # CYW43チップ強制リセット
     wlan.active(False)
     time.sleep_ms(300)
     wlan.active(True)
@@ -148,7 +149,6 @@ def scan_and_connect_best():
         for ap in AP_LIST:
             target_ssid = ap.get("ssid") or ap.get("SSID")
             if ssid and target_ssid and ssid == target_ssid:
-                log(f" 📌 登録AP検出: '{ssid}' (強度: {rssi}dBm)", "DIAG")
                 candidate_aps.append({
                     "ssid": target_ssid,
                     "pass": ap.get("pass") or ap.get("PASS"),
@@ -159,7 +159,7 @@ def scan_and_connect_best():
         log("⚠️ 周囲に登録済みのWi-Fiが見つかりません", "WARN")
         return False, None
 
-    # RSSI（電波強度）が強い順にソート（第1優先、第2優先...）
+    # RSSI（電波強度）が強い順にソート
     candidate_aps.sort(key=lambda x: x["rssi"], reverse=True)
 
     # 強い順に接続試行
@@ -208,7 +208,56 @@ def send_to_ubidots(payload):
         return False
 
 # ==================================================
-# 5. ローカルバッファ制御処理 (オフライン対策)
+# 5. GitHub OTA（自動更新）処理
+# ==================================================
+def check_github_ota():
+    """ GitHub上の最新 main.py とローカルを比較し、差分があれば上書きして再起動 """
+    user = getattr(config, "GITHUB_USER", None)
+    repo = getattr(config, "GITHUB_REPO", None)
+    branch = getattr(config, "GITHUB_BRANCH", "main")
+    token = getattr(config, "GITHUB_TOKEN", None)
+
+    if not (user and repo and token):
+        log("OTAチェック定義が config.py に不十分なためスキップします", "WARN")
+        return
+
+    url = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/main.py"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "Pico-OTA"
+    }
+
+    log("☁️ GitHub の最新コード（main.py）を確認中...", "INFO")
+    try:
+        res = urequests.get(url, headers=headers)
+        if res.status_code == 200:
+            remote_code = res.text
+            res.close()
+
+            # ローカルの main.py と比較
+            local_code = ""
+            try:
+                with open("main.py", "r") as f:
+                    local_code = f.read()
+            except Exception:
+                pass
+
+            if remote_code != local_code:
+                log("🔄 GitHub上に新しい更新を検出しました！ 書き換えて再起動します...", "WARN")
+                with open("main.py", "w") as f:
+                    f.write(remote_code)
+                time.sleep(1)
+                machine.reset()  # 本体再起動
+            else:
+                log("✅ コードは最新状態です (差分なし)", "INFO")
+        else:
+            log(f"GitHub取得エラー: ステータスコード {res.status_code}", "WARN")
+            res.close()
+    except Exception as e:
+        log(f"OTA更新確認例外: {e}", "ERROR")
+
+# ==================================================
+# 6. ローカルバッファ制御処理 (オフライン対策)
 # ==================================================
 def save_to_buffer(payload_item):
     """ 未送信データを Flash 内の json に一時保存 """
@@ -221,7 +270,6 @@ def save_to_buffer(payload_item):
 
     buffer.append(payload_item)
 
-    # 件数オーバー時は古いデータを押し出し
     if len(buffer) > MAX_BUFFER_SIZE:
         buffer.pop(0)
 
@@ -250,7 +298,7 @@ def flush_buffer():
         success = send_to_ubidots(item)
         if success:
             log(f"  └ 成功 ({idx}/{len(buffer)})", "INFO")
-            time.sleep_ms(200)  # 連投時の負荷軽減
+            time.sleep_ms(200)
         else:
             log(f"  └ 再送信失敗。残りを保持します", "WARN")
             remaining.extend(buffer[idx-1:])
@@ -268,11 +316,11 @@ def flush_buffer():
             pass
 
 # ==================================================
-# 6. メイン実行シーケンス (5分周期ループ)
+# 7. メイン実行シーケンス (5分周期ループ)
 # ==================================================
-def run_one_cycle():
-    """ 1回分の「計測 → 接続 → 送信/バッファ → 切断」シーケンス """
-    # 1. センサー計測 (Wi-Fiオフの状態で計測)
+def run_one_cycle(is_first_run=False):
+    """ 1回分の「計測 → 接続 → (OTA確認) → 送信/バッファ → 切断」シーケンス """
+    # 1. センサー計測
     led.value(1)
     temp = read_temperature()
     vsys = read_vsys()
@@ -281,7 +329,11 @@ def run_one_cycle():
     # 2. Wi-Fi 接続
     wifi_ok, rssi = scan_and_connect_best()
 
-    # 3. ペイロード作成
+    # 3. 起動直後の場合のみ GitHub OTA チェックを実施
+    if wifi_ok and is_first_run:
+        check_github_ota()
+
+    # 4. ペイロード作成
     payload = {}
     if temp is not None:
         payload["temperature"] = temp
@@ -290,10 +342,10 @@ def run_one_cycle():
     if rssi is not None:
         payload["rssi"] = rssi
 
-    # 4. 送信またはバッファリング
+    # 5. 送信またはバッファリング
     if wifi_ok and payload:
         log(f"計測完了 -> 温度: {temp}℃ / VSYS: {vsys}V / RSSI: {rssi}dBm", "INFO")
-        flush_buffer()  # 過去の未送信データをクリア
+        flush_buffer()
         
         log("Ubidotsへ最新データを送信中...", "INFO")
         if send_to_ubidots(payload):
@@ -306,7 +358,7 @@ def run_one_cycle():
         if payload:
             save_to_buffer(payload)
             
-    # 5. 次のサイクルに向けてWi-Fiを明示的に切断 (接続切り残しハング防止)
+    # 6. 切断
     try:
         wlan = network.WLAN(network.STA_IF)
         wlan.disconnect()
@@ -316,19 +368,21 @@ def run_one_cycle():
 
 def main():
     print("=" * 50)
-    print(f"  {DEVICE_NAME} 起動シーケンス (5分周期・自律バッファ＆動的APモード)")
+    print(f"  {DEVICE_NAME} 起動シーケンス (5分周期・OTA/動的AP/バッファ対応)")
     print(f"  デバイスラベル: {DEVICE_LABEL}")
     print("=" * 50)
+
+    is_first_run = True
 
     while True:
         start_time = time.time()
         
         try:
-            run_one_cycle()
+            run_one_cycle(is_first_run=is_first_run)
+            is_first_run = False  # 2回目以降はOTAチェックをスキップ（起動時のみ実施）
         except Exception as e:
             log(f"メインループ内例外発生: {e}", "ERROR")
 
-        # 処理にかかった時間を差し引いて正確に 5分（300秒）間隔を維持
         elapsed = time.time() - start_time
         sleep_time = max(1, INTERVAL_SEC - elapsed)
         
