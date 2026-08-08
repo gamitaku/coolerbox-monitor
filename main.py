@@ -193,11 +193,15 @@ def scan_and_connect_best():
 
         log(f"🎯 選択AP ({idx}/{len(candidate_aps)}): '{target_ssid}' ({target_rssi}dBm) 接続試行...", "INFO")
         
+        # Wi-Fiチップのインターフェースリフレッシュ
         try:
-            wlan.disconnect()
+            wlan.active(False)
+            time.sleep_ms(300)
+            wlan.active(True)
+            time.sleep_ms(300)
+            wlan.config(pm=0xa11154)
         except Exception:
             pass
-        time.sleep(1)
 
         wlan.connect(target_ssid, target_pass)
 
@@ -224,7 +228,7 @@ def scan_and_connect_best():
     return False, None
 
 def send_to_ubidots(payload):
-    """ UbidotsへHTTP POSTで送信 """
+    """ UbidotsへHTTP POSTで送信 (詳細エラーログ付き) """
     url = f"http://industrial.api.ubidots.com/api/v1.6/devices/{DEVICE_LABEL}"
     headers = {
         "X-Auth-Token": UBIDOTS_TOKEN,
@@ -234,6 +238,8 @@ def send_to_ubidots(payload):
     try:
         response = urequests.post(url, json=payload, headers=headers)
         status = response.status_code
+        if status not in (200, 201):
+            log(f"Ubidots送信エラー (Status: {status}): {response.text}", "WARN")
         response.close()
         return status in (200, 201)
     except Exception as e:
@@ -362,7 +368,7 @@ def run_one_cycle():
     # 2. Wi-Fi 接続
     wifi_ok, rssi = scan_and_connect_best()
 
-    # 3. ★ 毎サイクル GitHub OTA チェックを実施 (Wi-Fi接続時)
+    # 3. 毎サイクル GitHub OTA チェックを実施 (Wi-Fi接続時)
     if wifi_ok:
         check_github_ota()
 
@@ -408,17 +414,21 @@ def main():
     print("=" * 50)
 
     while True:
-        start_time = time.time()
+        # ★ NTP同期で時刻が補正されても影響を受けないミリ秒タイマーを使用
+        start_ticks = time.ticks_ms()
         
         try:
             run_one_cycle()
         except Exception as e:
             log(f"メインループ内例外発生: {e}", "ERROR")
 
-        elapsed = time.time() - start_time
-        sleep_time = max(1, INTERVAL_SEC - elapsed)
+        # 経過ミリ秒を秒に変換して待機時間を計算
+        elapsed_ms = time.ticks_diff(time.ticks_ms(), start_ticks)
+        elapsed_sec = elapsed_ms / 1000.0
         
-        log(f"⏳ 処理時間: {elapsed}秒 ➔ 次の計測まで {sleep_time}秒 待機します", "INFO")
+        sleep_time = max(1, int(INTERVAL_SEC - elapsed_sec))
+        
+        log(f"⏳ 処理時間: {elapsed_sec:.1f}秒 ➔ 次の計測まで {sleep_time}秒 待機します", "INFO")
         time.sleep(sleep_time)
 
 if __name__ == "__main__":
