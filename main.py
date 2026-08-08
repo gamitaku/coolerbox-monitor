@@ -193,15 +193,12 @@ def scan_and_connect_best():
 
         log(f"🎯 選択AP ({idx}/{len(candidate_aps)}): '{target_ssid}' ({target_rssi}dBm) 接続試行...", "INFO")
         
-        # Wi-Fiチップのインターフェースリフレッシュ
+        # Wi-Fiチップの内部状態リセット・切断後の安定化（Pico 2 W 接続成功率アップ対応）
         try:
-            wlan.active(False)
-            time.sleep_ms(300)
-            wlan.active(True)
-            time.sleep_ms(300)
-            wlan.config(pm=0xa11154)
+            wlan.disconnect()
         except Exception:
             pass
+        time.sleep_ms(1000)
 
         wlan.connect(target_ssid, target_pass)
 
@@ -414,7 +411,7 @@ def main():
     print("=" * 50)
 
     while True:
-        # ★ NTP同期で時刻が補正されても影響を受けないミリ秒タイマーを使用
+        # NTP同期で時刻が補正されても影響を受けないミリ秒タイマーを使用
         start_ticks = time.ticks_ms()
         
         try:
