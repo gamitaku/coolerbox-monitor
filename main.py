@@ -1,30 +1,30 @@
 import network
 import time
-from machine import Pin, ADC, reset
+import json
+import os
+from machine import Pin, ADC
 import onewire, ds18x20
 import urequests
-import config
-import ota_updater  # Pico内の ota_updater.py を呼び出す
+import config  # ★ config.py を読み込み
 
 # ==================================================
 # 1. システム設定・機体選択
 # ==================================================
 DEVICE_NAME = config.DEVICE_NAME
-
-# config.py の WIFI_AP_LIST を直接取得（後換性フォールバック付き）
-if hasattr(config, "WIFI_AP_LIST"):
-    AP_LIST = config.WIFI_AP_LIST
-else:
-    AP_LIST = [{"ssid": getattr(config, "WIFI_SSID", ""), "pass": getattr(config, "WIFI_PASS", "")}]
-
 UBIDOTS_TOKEN = config.UBIDOTS_TOKEN
+BUFFER_FILE = "unsent_buffer.json"  # 未送信データ保持用ファイル
+MAX_BUFFER_SIZE = 500              # 最大バッファ件数（Flash圧迫防止）
+INTERVAL_SEC = 300                 # 5分（300秒）周期
 
-# 🌐 通信・ロケーション判定パラメータ
-LOW_RSSI_THRESHOLD = -45     # -45 dBm を下回ったら再スキャン＆接続
-RSSI_DELTA_THRESHOLD = 10    # ±10 dBm 以上の急変でロケーション変動とみなす
-MAX_RETRY = 3                # 連続失敗数の上限
-COOL_DOWN_MINUTES = 15      # 3回失敗時の待機時間（分）
+# config.py の AP_LIST (複数AP対応) または 単一 AP へのフォールバック処理
+AP_LIST = getattr(config, "AP_LIST", None)
+if not AP_LIST:
+    # 古い config.py (単一AP記述) 互換用
+    AP_LIST = [{"ssid": config.WIFI_SSID, "pass": config.WIFI_PASS}]
 
+# --------------------------------------------------
+# プロファイル設定（複数台並列運用の自動マッピング）
+# --------------------------------------------------
 DEVICE_PROFILES = {
     "保冷BOX本機": {
         "DEVICE_LABEL": "pico-w-main",
@@ -32,7 +32,7 @@ DEVICE_PROFILES = {
     },
     "検証機": {
         "DEVICE_LABEL": "pico-2w-test",
-        "VSYS_COEFF": 0.00014943  # 実測校正値
+        "VSYS_COEFF": 0.00014943  # Pico 2 W 専用キャリブレーション値
     }
 }
 
@@ -50,43 +50,37 @@ DS_PIN_NUM = 15     # GP15
 VSYS_ADC_NUM = 3    # GP29 (ADC3)
 LED_PIN_NUM = "LED"
 
-# グローバル状態保持
-last_rssi = None
-fail_count = 0
-
 # ==================================================
-# 2. ハードウェア初期化＆ログ補助
+# 2. ハードウェア初期化
 # ==================================================
 led = Pin(LED_PIN_NUM, Pin.OUT)
 ow = onewire.OneWire(Pin(DS_PIN_NUM))
 ds = ds18x20.DS18X20(ow)
 
+# ==================================================
+# 3. ログ・センサー計測処理
+# ==================================================
 def log(msg, level="INFO"):
-    """ 後日解析用 タイムスタンプ付き詳細ログ関数 """
-    t = time.localtime()
-    time_str = "{:02d}:{:02d}:{:02d}".format(t[3], t[4], t[5])
-    print(f"[{time_str}] [{DEVICE_NAME}] [{level}] {msg}")
+    """ 標準ログ出力関数 """
+    print(f"[{DEVICE_NAME}] [{level}] {msg}")
 
-# ==================================================
-# 3. センサー計測処理
-# ==================================================
 def read_temperature():
     """ DS18B20から温度を取得 """
     try:
         roms = ds.scan()
         if not roms:
-            log("DS18B20未検出 -> 配線を確認してください", "警告")
+            log("警告: DS18B20未検出 -> 配線を確認してください", "WARN")
             return None
         ds.convert_temp()
         time.sleep_ms(750)
         temp = ds.read_temp(roms[0])
         return round(temp, 2)
     except Exception as e:
-        log(f"温度計測失敗: {e}", "エラー")
+        log(f"温度計測失敗: {e}", "ERROR")
         return None
 
 def read_vsys():
-    """ VSYS電源電圧を計測 (GP29 / ADC3) """
+    """ VSYS電源電圧を計測 (Pico 2 W 安定化版) """
     try:
         vsys_pin = Pin(29, Pin.IN)
         vsys_adc = ADC(vsys_pin)
@@ -99,51 +93,46 @@ def read_vsys():
         raw = total_raw // 10
         
         voltage = raw * VSYS_COEFF
-        log(f"VSYS raw: {raw}, calc: {voltage:.2f}V", "DEBUG")
-
+        log(f"DEBUG VSYS raw: {raw}, calc: {voltage:.2f}V", "DEBUG")
         return round(voltage, 2)
     except Exception as e:
-        log(f"VSYS計測失敗: {e}", "エラー")
+        log(f"VSYS計測失敗: {e}", "ERROR")
         return None
 
 # ==================================================
-# 4. Wi-Fi接続制御 (複数AP対応・判定ロジック組み込み)
+# 4. 通信処理 (動的AP選択 & Ubidots 送信)
 # ==================================================
 def scan_and_connect_best():
     """ 周辺スキャンを実施し、登録済みAPを電波強度順に試行して接続 """
     wlan = network.WLAN(network.STA_IF)
     
-    # 💡 対策1: チップの強制再初期化 (soft reboot対策)
+    # CYW43チップ強制リセット (soft reboot時のハング対策)
     wlan.active(False)
-    time.sleep_ms(500)
+    time.sleep_ms(300)
     wlan.active(True)
     time.sleep(1)
     
     try:
-        wlan.config(pm=0xa11154) # CYW43 省電力OFF (パフォーマンス優先)
+        wlan.config(pm=0xa11154) # 省電力OFF (パフォーマンス優先)
     except Exception:
         pass
 
     log("🔍 周辺Wi-Fiスキャン中...", "DIAG")
-    
-    # 💡 対策2: スキャンの自動リトライ (最大3回)
     scanned = []
     for retry in range(1, 4):
         try:
             scanned = wlan.scan()
             if scanned:
                 break
-            log(f"⚠️ スキャン結果が空です。再試行中... ({retry}/3)", "WARN")
             time.sleep(1)
-        except Exception as e:
-            log(f"スキャン例外発生: {e}", "エラー")
+        except Exception:
             time.sleep(1)
 
     if not scanned:
-        log("❌ 周囲に2.4GHz帯のWi-Fiが見つかりません（3回試行失敗）", "WARN")
+        log("⚠️ 周囲に2.4GHz帯のWi-Fiが見つかりません", "WARN")
         return False, None
 
-    # スキャン結果から「登録済みAP」のみを抽出
+    # スキャン結果から「登録済みAP」のみ抽出
     candidate_aps = []
     for net in scanned:
         ssid = net[0].decode('utf-8')
@@ -160,48 +149,42 @@ def scan_and_connect_best():
                 })
 
     if not candidate_aps:
-        log("❌ 周囲に登録済みのWi-Fiアクセスポイントが見つかりませんでした", "警告")
+        log("⚠️ 周囲に登録済みのWi-Fiが見つかりません", "WARN")
         return False, None
 
     # RSSI（電波強度）が強い順にソート（第1優先、第2優先...）
     candidate_aps.sort(key=lambda x: x["rssi"], reverse=True)
 
-    # 強い順に順番に接続を試行
+    # 強い順に接続試行
     for idx, target in enumerate(candidate_aps, 1):
         target_ssid = target["ssid"]
         target_pass = target["pass"]
         target_rssi = target["rssi"]
 
-        log(f"🎯 [試行 {idx}/{len(candidate_aps)}] 選択AP: '{target_ssid}' (強度: {target_rssi}dBm) に接続試行...", "INFO")
+        log(f"🎯 選択AP ({idx}/{len(candidate_aps)}): '{target_ssid}' ({target_rssi}dBm) 接続試行...", "INFO")
         
         wlan.disconnect()
         time.sleep(1)
-        
         wlan.connect(target_ssid, target_pass)
 
-        # 15秒間 接続完了を監視
         timeout = 15
         while timeout > 0:
             status = wlan.status()
-            # isconnected() か status == 3 (STAT_GOT_IP) で成功判定
             if wlan.isconnected() or status == 3:
-                ifconfig = wlan.ifconfig()
-                log(f"✅ Wi-Fi接続成功! IP: {ifconfig[0]}, GW: {ifconfig[2]}", "INFO")
+                ip = wlan.ifconfig()[0]
+                log(f"✅ Wi-Fi接続成功! IP: {ip}", "INFO")
                 return True, target_rssi
-            elif status < 0: # エラー状態
-                log(f"⚠️ 接続エラーを検知 (status: {status})", "WARN")
+            elif status < 0:
                 break
-                
             time.sleep(1)
             timeout -= 1
 
-        log(f"❌ '{target_ssid}' への接続タイムアウト/失敗。次のAPを試します...", "WARN")
+        log(f"❌ '{target_ssid}' 接続失敗。次のAPへ...", "WARN")
 
-    log("❌ すべての登録済みアクセスポイントへの接続に失敗しました", "警告")
     return False, None
 
 def send_to_ubidots(payload):
-    """ UbidotsへHTTP POSTでデータを送信 """
+    """ UbidotsへHTTP POSTで送信 """
     url = f"http://industrial.api.ubidots.com/api/v1.6/devices/{DEVICE_LABEL}"
     headers = {
         "X-Auth-Token": UBIDOTS_TOKEN,
@@ -212,77 +195,86 @@ def send_to_ubidots(payload):
         response = urequests.post(url, json=payload, headers=headers)
         status = response.status_code
         response.close()
-        return status
+        return status in (200, 201)
     except Exception as e:
-        log(f"Ubidots送信例外 (ソケット/DNSエラー): {e}", "エラー")
-        return None
+        log(f"Ubidots送信例外: {e}", "ERROR")
+        return False
 
 # ==================================================
-# 5. メイン実行シーケンス
+# 5. ローカルバッファ制御処理 (オフライン対策)
 # ==================================================
-def run_cycle():
-    global last_rssi, fail_count
+def save_to_buffer(payload_item):
+    """ 未送信データを Flash 内の json に一時保存 """
+    buffer = []
+    try:
+        with open(BUFFER_FILE, "r") as f:
+            buffer = json.load(f)
+    except Exception:
+        buffer = []
 
-    wlan = network.WLAN(network.STA_IF)
-    need_reconnect = False
-    
-    if not wlan.isconnected():
-        log("Wi-Fi未接続状態を検知", "WARN")
-        need_reconnect = True
+    buffer.append(payload_item)
+
+    # 件数オーバー時は古いデータを押し出し
+    if len(buffer) > MAX_BUFFER_SIZE:
+        buffer.pop(0)
+
+    try:
+        with open(BUFFER_FILE, "w") as f:
+            json.dump(buffer, f)
+        log(f"💾 データをローカルバッファに保存しました (全{len(buffer)}件)", "WARN")
+    except Exception as e:
+        log(f"バッファ保存エラー: {e}", "ERROR")
+
+def flush_buffer():
+    """ Wi-Fi復帰時に溜まったバッファを一括送信 """
+    try:
+        with open(BUFFER_FILE, "r") as f:
+            buffer = json.load(f)
+    except Exception:
+        return
+
+    if not buffer:
+        return
+
+    log(f"📤 蓄積バッファ ({len(buffer)}件) のフラッシュ送信を開始...", "INFO")
+    remaining = []
+
+    for idx, item in enumerate(buffer, 1):
+        success = send_to_ubidots(item)
+        if success:
+            log(f"  └ 成功 ({idx}/{len(buffer)})", "INFO")
+            time.sleep_ms(200)  # 連投時の負荷軽減
+        else:
+            log(f"  └ 再送信失敗。残りを保持します", "WARN")
+            remaining.extend(buffer[idx-1:])
+            break
+
+    if remaining:
+        with open(BUFFER_FILE, "w") as f:
+            json.dump(remaining, f)
+        log(f"⚠️ 一部未送信あり。残り: {len(remaining)}件", "WARN")
     else:
         try:
-            current_rssi = wlan.status('rssi')
+            os.remove(BUFFER_FILE)
+            log("✅ バッファデータをすべて正常送信・クリアしました！", "INFO")
         except Exception:
-            current_rssi = -99
+            pass
 
-        # 条件1: -45 dBm 未満（電波低下）
-        if current_rssi < LOW_RSSI_THRESHOLD:
-            log(f"📉 電波低下検知 ({current_rssi} dBm < {LOW_RSSI_THRESHOLD} dBm)。再選択を実行します。", "WARN")
-            wlan.disconnect()
-            need_reconnect = True
-        
-        # 条件2: ±10 dBm 以上の急変（ロケーション変動）
-        elif last_rssi is not None and abs(current_rssi - last_rssi) >= RSSI_DELTA_THRESHOLD:
-            log(f"🚗 ロケーション変動検知 (前回: {last_rssi} dBm -> 今回: {current_rssi} dBm)。最適APを再検索します。", "INFO")
-            wlan.disconnect()
-            need_reconnect = True
-
-    # 再接続処理が必要な場合
-    if need_reconnect:
-        wifi_ok, rssi = scan_and_connect_best()
-        if not wifi_ok:
-            fail_count += 1
-            log(f"❌ 接続失敗 (連続失敗数: {fail_count}/{MAX_RETRY})", "ERROR")
-            
-            # 3回連続失敗時の15分冷却＆ハードリセット
-            if fail_count >= MAX_RETRY:
-                log(f"🛑 {MAX_RETRY}回連続失敗。通信スタックと判断し{COOL_DOWN_MINUTES}分待機後にハードリセットします。", "CRITICAL")
-                time.sleep(COOL_DOWN_MINUTES * 60)
-                log("🔄 15分経過。Picoをハードリセットして再起動します...", "SYSTEM")
-                reset()
-            return False
-        else:
-            fail_count = 0
-            last_rssi = rssi
-    else:
-        last_rssi = wlan.status('rssi')
-        rssi = last_rssi
-
-    # OTA 自動更新チェック
-    try:
-        ota_updater.check_and_update()
-    except Exception as e:
-        log(f"OTA更新チェック例外: {e}", "WARN")
-
+# ==================================================
+# 6. メイン実行シーケンス (5分周期ループ)
+# ==================================================
+def run_one_cycle():
+    """ 1回分の「計測 → 接続 → 送信/バッファ → 切断」シーケンス """
+    # 1. センサー計測 (Wi-Fiオフの状態で計測)
     led.value(1)
-    
-    # センサー計測
     temp = read_temperature()
     vsys = read_vsys()
-    
-    log(f"計測完了 -> 温度: {temp}℃ / VSYS: {vsys}V / RSSI: {rssi}dBm", "INFO")
-    
-    # ペイロード作成
+    led.value(0)
+
+    # 2. Wi-Fi 接続
+    wifi_ok, rssi = scan_and_connect_best()
+
+    # 3. ペイロード作成
     payload = {}
     if temp is not None:
         payload["temperature"] = temp
@@ -291,30 +283,50 @@ def run_cycle():
     if rssi is not None:
         payload["rssi"] = rssi
 
-    # Ubidots 送信 (最大3回試行)
-    success = False
-    for attempt in range(1, 4):
-        log(f"Ubidots送信試行 ({attempt}/3)...", "INFO")
-        status = send_to_ubidots(payload)
+    # 4. 送信またはバッファリング
+    if wifi_ok and payload:
+        log(f"計測完了 -> 温度: {temp}℃ / VSYS: {vsys}V / RSSI: {rssi}dBm", "INFO")
+        flush_buffer()  # 過去の未送信データをクリア
         
-        if status in (200, 201):
-            log(f"★ Ubidotsデータ送信成功! Status: {status}", "INFO")
-            success = True
-            break
+        log("Ubidotsへ最新データを送信中...", "INFO")
+        if send_to_ubidots(payload):
+            log("★ 最新データの送信成功!", "INFO")
         else:
-            log(f"送信失敗 ステータスコード: {status}", "WARN")
-            time.sleep(1)
-
-    led.value(0)
-    return success
+            log("❌ 送信失敗。バッファへ退避します", "WARN")
+            save_to_buffer(payload)
+    else:
+        log(f"オフライン計測 -> 温度: {temp}℃ / VSYS: {vsys}V", "WARN")
+        if payload:
+            save_to_buffer(payload)
+            
+    # 5. 次のサイクルに向けてWi-Fiを明示的に切断 (接続切り残しハング防止)
+    try:
+        wlan = network.WLAN(network.STA_IF)
+        wlan.disconnect()
+        wlan.active(False)
+    except Exception:
+        pass
 
 def main():
     print("=" * 50)
-    print(f"  {DEVICE_NAME} 起動シーケンス (動的AP選択・監視モード)")
+    print(f"  {DEVICE_NAME} 起動シーケンス (5分周期・自律バッファ＆動的APモード)")
     print(f"  デバイスラベル: {DEVICE_LABEL}")
     print("=" * 50)
-    
-    run_cycle()
+
+    while True:
+        start_time = time.time()
+        
+        try:
+            run_one_cycle()
+        except Exception as e:
+            log(f"メインループ内例外発生: {e}", "ERROR")
+
+        # 処理にかかった時間を差し引いて正確に 5分（300秒）間隔を維持
+        elapsed = time.time() - start_time
+        sleep_time = max(1, INTERVAL_SEC - elapsed)
+        
+        log(f"⏳ 処理時間: {elapsed}秒 ➔ 次の計測まで {sleep_time}秒 待機します", "INFO")
+        time.sleep(sleep_time)
 
 if __name__ == "__main__":
     main()
