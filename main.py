@@ -90,7 +90,6 @@ def sync_ntp_time():
 
 def get_current_timestamp_ms():
     """ Ubidots用 UNIXタイムスタンプ（ミリ秒）を取得 """
-    # time.time() は 2000/1/1 からの経過秒数を返すため、1970年基準へ補正
     unix_sec = time.time() + EPOCH_OFFSET
     return unix_sec * 1000
 
@@ -352,8 +351,8 @@ def flush_buffer():
 # ==================================================
 # 7. メイン実行シーケンス (5分周期ループ)
 # ==================================================
-def run_one_cycle(is_first_run=False):
-    """ 1回分の「計測 → 接続 → (OTA確認) → 送信/バッファ → 切断」シーケンス """
+def run_one_cycle():
+    """ 1回分の「計測 → 接続 → (毎サイクルOTA確認) → 送信/バッファ → 切断」シーケンス """
     # 1. センサー計測
     led.value(1)
     temp = read_temperature()
@@ -363,11 +362,11 @@ def run_one_cycle(is_first_run=False):
     # 2. Wi-Fi 接続
     wifi_ok, rssi = scan_and_connect_best()
 
-    # 3. 起動直後の場合のみ GitHub OTA チェックを実施
-    if wifi_ok and is_first_run:
+    # 3. ★ 毎サイクル GitHub OTA チェックを実施 (Wi-Fi接続時)
+    if wifi_ok:
         check_github_ota()
 
-    # 4. ペイロード作成 (Ubidots用タイムスタンプ構造に拡張)
+    # 4. ペイロード作成 (Ubidots用タイムスタンプ構造)
     now_ts = get_current_timestamp_ms()
     payload = {}
 
@@ -404,18 +403,15 @@ def run_one_cycle(is_first_run=False):
 
 def main():
     print("=" * 50)
-    print(f"  {DEVICE_NAME} 起動シーケンス (5分周期・NTP/OTA/動的AP/バッファ対応)")
+    print(f"  {DEVICE_NAME} 起動シーケンス (5分周期・毎サイクルOTA/NTP/動的AP/バッファ対応)")
     print(f"  デバイスラベル: {DEVICE_LABEL}")
     print("=" * 50)
-
-    is_first_run = True
 
     while True:
         start_time = time.time()
         
         try:
-            run_one_cycle(is_first_run=is_first_run)
-            is_first_run = False  # 2回目以降はOTAチェックをスキップ（起動時のみ実施）
+            run_one_cycle()
         except Exception as e:
             log(f"メインループ内例外発生: {e}", "ERROR")
 
