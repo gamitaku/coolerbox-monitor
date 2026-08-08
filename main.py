@@ -6,7 +6,8 @@ import machine
 from machine import Pin, ADC
 import onewire, ds18x20
 import urequests
-import config  # ★ config.py を読み込み
+import ntptime  # ★ NTP時刻同期用
+import config   # ★ config.py を読み込み
 
 # ==================================================
 # 1. システム設定・機体選択
@@ -19,7 +20,6 @@ INTERVAL_SEC = 300                 # 5分（300秒）周期
 
 # --------------------------------------------------
 # config.py から APリストを柔軟に自動取得
-# (WIFI_AP_LIST / AP_LIST / WIFI_SSID のいずれにも対応)
 # --------------------------------------------------
 AP_LIST = getattr(config, "WIFI_AP_LIST", None) or getattr(config, "AP_LIST", None)
 if not AP_LIST:
@@ -58,6 +58,9 @@ DS_PIN_NUM = 15     # GP15
 VSYS_ADC_NUM = 3    # GP29 (ADC3)
 LED_PIN_NUM = "LED"
 
+# エポック変換用（MicroPython: 2000年基準 ➔ Unix Time: 1970年基準 差分秒数）
+EPOCH_OFFSET = 946684800
+
 # ==================================================
 # 2. ハードウェア初期化
 # ==================================================
@@ -71,6 +74,25 @@ ds = ds18x20.DS18X20(ow)
 def log(msg, level="INFO"):
     """ 標準ログ出力関数 """
     print(f"[{DEVICE_NAME}] [{level}] {msg}")
+
+def sync_ntp_time():
+    """ Wi-Fi接続時にNTPサーバーから時刻を取得してRTCを更新 """
+    ntptime.host = "ntp.nict.jp"  # NICTのNTPサーバー
+    for retry in range(3):
+        try:
+            ntptime.settime()
+            log("⏰ NTP時刻同期に成功しました", "INFO")
+            return True
+        except Exception as e:
+            time.sleep(1)
+    log("⚠️ NTP時刻同期に失敗しました", "WARN")
+    return False
+
+def get_current_timestamp_ms():
+    """ Ubidots用 UNIXタイムスタンプ（ミリ秒）を取得 """
+    # time.time() は 2000/1/1 からの経過秒数を返すため、1970年基準へ補正
+    unix_sec = time.time() + EPOCH_OFFSET
+    return unix_sec * 1000
 
 def read_temperature():
     """ DS18B20から温度を取得 """
@@ -114,7 +136,6 @@ def scan_and_connect_best():
     """ 周辺スキャンを実施し、登録済みAPを電波強度順に試行して接続 """
     wlan = network.WLAN(network.STA_IF)
     
-    # CYW43ハング防止：すでに有効な場合は再有効化を行わない
     if not wlan.active():
         wlan.active(True)
         time.sleep_ms(500)
@@ -140,7 +161,7 @@ def scan_and_connect_best():
         log("⚠️ 周囲に2.4GHz帯のWi-Fiが見つかりません", "WARN")
         return False, None
 
-    # スキャン結果から「登録済みAP」のみ抽出
+    # 抽出処理
     candidate_aps = []
     for net in scanned:
         ssid = net[0].decode('utf-8')
@@ -159,10 +180,13 @@ def scan_and_connect_best():
         log("⚠️ 周囲に登録済みのWi-Fiが見つかりません", "WARN")
         return False, None
 
-    # RSSI（電波強度）が強い順にソート
+    # 電波強度順にソート
     candidate_aps.sort(key=lambda x: x["rssi"], reverse=True)
 
-    # 強い順に接続試行
+    # スキャン後の安定化待機
+    time.sleep_ms(1500)
+
+    # 接続試行
     for idx, target in enumerate(candidate_aps, 1):
         target_ssid = target["ssid"]
         target_pass = target["pass"]
@@ -174,22 +198,23 @@ def scan_and_connect_best():
             wlan.disconnect()
         except Exception:
             pass
-        time.sleep_ms(500)
+        time.sleep(1)
 
         wlan.connect(target_ssid, target_pass)
 
-        # 接続待機ループ (wlan.isconnected() を主体にしたロバスト判定)
+        # 接続確認ループ
         timeout = 20
         while timeout > 0:
             if wlan.isconnected():
                 ip = wlan.ifconfig()[0]
                 log(f"✅ Wi-Fi接続成功! IP: {ip}", "INFO")
+                # Wi-Fi接続成功時に NTP で時刻同期
+                sync_ntp_time()
                 return True, target_rssi
             
             st = wlan.status()
-            # 明らかなエラー (パスワード違い / AP未発見) 時のみデバッグ出力して早期打ち切り
             if st in (-2, -3):
-                log(f"DEBUG: 接続失敗判定 (status={st})", "DEBUG")
+                log(f"DEBUG: 明らかなエラー検出 (status={st})", "DEBUG")
                 break
 
             time.sleep(1)
@@ -342,14 +367,16 @@ def run_one_cycle(is_first_run=False):
     if wifi_ok and is_first_run:
         check_github_ota()
 
-    # 4. ペイロード作成
+    # 4. ペイロード作成 (Ubidots用タイムスタンプ構造に拡張)
+    now_ts = get_current_timestamp_ms()
     payload = {}
+
     if temp is not None:
-        payload["temperature"] = temp
+        payload["temperature"] = {"value": temp, "timestamp": now_ts}
     if vsys is not None:
-        payload["vsys_voltage"] = vsys
+        payload["vsys_voltage"] = {"value": vsys, "timestamp": now_ts}
     if rssi is not None:
-        payload["rssi"] = rssi
+        payload["rssi"] = {"value": rssi, "timestamp": now_ts}
 
     # 5. 送信またはバッファリング
     if wifi_ok and payload:
@@ -367,7 +394,7 @@ def run_one_cycle(is_first_run=False):
         if payload:
             save_to_buffer(payload)
             
-    # 6. 切断 (CYW43フリーズ防止のため active(False) は呼ばず disconnect のみ)
+    # 6. 切断
     try:
         wlan = network.WLAN(network.STA_IF)
         if wlan.isconnected():
@@ -377,7 +404,7 @@ def run_one_cycle(is_first_run=False):
 
 def main():
     print("=" * 50)
-    print(f"  {DEVICE_NAME} 起動シーケンス (5分周期・OTA/動的AP/バッファ対応)")
+    print(f"  {DEVICE_NAME} 起動シーケンス (5分周期・NTP/OTA/動的AP/バッファ対応)")
     print(f"  デバイスラベル: {DEVICE_LABEL}")
     print("=" * 50)
 
