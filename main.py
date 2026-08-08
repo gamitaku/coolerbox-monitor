@@ -170,19 +170,28 @@ def scan_and_connect_best():
 
         log(f"🎯 選択AP ({idx}/{len(candidate_aps)}): '{target_ssid}' ({target_rssi}dBm) 接続試行...", "INFO")
         
-        wlan.disconnect()
+        try:
+            wlan.disconnect()
+        except Exception:
+            pass
         time.sleep_ms(500)
+
         wlan.connect(target_ssid, target_pass)
 
-        timeout = 15
+        # 接続待機ループ (wlan.isconnected() を主体にしたロバスト判定)
+        timeout = 20
         while timeout > 0:
-            status = wlan.status()
-            if wlan.isconnected() or status == 3:
+            if wlan.isconnected():
                 ip = wlan.ifconfig()[0]
                 log(f"✅ Wi-Fi接続成功! IP: {ip}", "INFO")
                 return True, target_rssi
-            elif status < 0:
+            
+            st = wlan.status()
+            # 明らかなエラー (パスワード違い / AP未発見) 時のみデバッグ出力して早期打ち切り
+            if st in (-2, -3):
+                log(f"DEBUG: 接続失敗判定 (status={st})", "DEBUG")
                 break
+
             time.sleep(1)
             timeout -= 1
 
