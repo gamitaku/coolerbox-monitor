@@ -16,11 +16,18 @@ BUFFER_FILE = "unsent_buffer.json"  # 未送信データ保持用ファイル
 MAX_BUFFER_SIZE = 500              # 最大バッファ件数（Flash圧迫防止）
 INTERVAL_SEC = 300                 # 5分（300秒）周期
 
-# config.py の AP_LIST (複数AP対応) または 単一 AP へのフォールバック処理
-AP_LIST = getattr(config, "AP_LIST", None)
+# --------------------------------------------------
+# config.py から APリストを柔軟に自動取得
+# --------------------------------------------------
+AP_LIST = getattr(config, "WIFI_AP_LIST", None) or getattr(config, "AP_LIST", None)
 if not AP_LIST:
-    # 古い config.py (単一AP記述) 互換用
-    AP_LIST = [{"ssid": config.WIFI_SSID, "pass": config.WIFI_PASS}]
+    # 単一AP設定（WIFI_SSID）の場合のフォールバック処理
+    wifi_ssid = getattr(config, "WIFI_SSID", None)
+    wifi_pass = getattr(config, "WIFI_PASS", None)
+    if wifi_ssid and wifi_pass:
+        AP_LIST = [{"ssid": wifi_ssid, "pass": wifi_pass}]
+    else:
+        AP_LIST = []
 
 # --------------------------------------------------
 # プロファイル設定（複数台並列運用の自動マッピング）
