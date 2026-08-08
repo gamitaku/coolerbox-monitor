@@ -58,9 +58,6 @@ DS_PIN_NUM = 15     # GP15
 VSYS_ADC_NUM = 3    # GP29 (ADC3)
 LED_PIN_NUM = "LED"
 
-# エポック変換用（MicroPython: 2000年基準 ➔ Unix Time: 1970年基準 差分秒数）
-EPOCH_OFFSET = 946684800
-
 # ==================================================
 # 2. ハードウェア初期化
 # ==================================================
@@ -90,8 +87,8 @@ def sync_ntp_time():
 
 def get_current_timestamp_ms():
     """ Ubidots用 UNIXタイムスタンプ（ミリ秒）を取得 """
-    unix_sec = time.time() + EPOCH_OFFSET
-    return unix_sec * 1000
+    # ntptime.settime()実行後は time.time() がUnix Time(秒)になるためそのまま1000倍する
+    return int(time.time() * 1000)
 
 def read_temperature():
     """ DS18B20から温度を取得 """
@@ -193,7 +190,7 @@ def scan_and_connect_best():
 
         log(f"🎯 選択AP ({idx}/{len(candidate_aps)}): '{target_ssid}' ({target_rssi}dBm) 接続試行...", "INFO")
         
-        # Wi-Fiチップの内部状態リセット・切断後の安定化（Pico 2 W 接続成功率アップ対応）
+        # Wi-Fi切断後の安定化処理
         try:
             wlan.disconnect()
         except Exception:
