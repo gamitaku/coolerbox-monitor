@@ -6,17 +6,17 @@ import machine
 from machine import Pin, ADC
 import onewire, ds18x20
 import urequests
-import ntptime  # ★ NTP時刻同期用
-import config   # ★ config.py を読み込み
+import ntptime   # NTP時刻同期用
+import config    # config.py を読み込み
 
 # ==================================================
 # 1. システム設定・機体選択
 # ==================================================
 DEVICE_NAME = config.DEVICE_NAME
-UBIDOTS_TOKEN = config.UBIDOTS_TOKEN
+GAS_URL = getattr(config, "GAS_URL", None)
 BUFFER_FILE = "unsent_buffer.json"  # 未送信データ保持用ファイル
 MAX_BUFFER_SIZE = 500              # 最大バッファ件数
-INTERVAL_SEC = 300                 # 5分（300秒）周期
+INTERVAL_SEC = 300                  # 5分（300秒）周期
 
 # --------------------------------------------------
 # config.py から APリストを柔軟に自動取得
@@ -54,8 +54,8 @@ DEVICE_LABEL = active_profile["DEVICE_LABEL"]
 VSYS_COEFF = active_profile["VSYS_COEFF"]
 
 # ピン配置
-DS_PIN_NUM = 15     # GP15
-VSYS_ADC_NUM = 3    # GP29 (ADC3)
+DS_PIN_NUM = 15     # GP15 (1-Wire データ線)
+VSYS_ADC_NUM = 29   # GP29 (ADC3)
 LED_PIN_NUM = "LED"
 
 # ==================================================
@@ -85,30 +85,37 @@ def sync_ntp_time():
     log("⚠️ NTP時刻同期に失敗しました", "WARN")
     return False
 
-def get_current_timestamp_ms():
-    """ Ubidots用 UNIXタイムスタンプ（ミリ秒）を取得 """
-    # ntptime.settime()実行後は time.time() がUnix Time(秒)になるためそのまま1000倍する
-    return int(time.time() * 1000)
-
-def read_temperature():
-    """ DS18B20から温度を取得 """
+def read_temperatures():
+    """ DS18B20から温度を2軸分取得（ROM ID昇順で識別） """
     try:
         roms = ds.scan()
         if not roms:
             log("警告: DS18B20未検出 -> 配線を確認してください", "WARN")
-            return None
+            return None, None
+        
+        # ROM IDを昇順ソートして常に同じセンサーを特定
+        roms = sorted(roms)
+
         ds.convert_temp()
         time.sleep_ms(750)
-        temp = ds.read_temp(roms[0])
-        return round(temp, 2)
+
+        temp_box = round(ds.read_temp(roms[0]), 2)  # ROM[0] = BOX内温度
+        
+        temp_house = None
+        if len(roms) >= 2:
+            temp_house = round(ds.read_temp(roms[1]), 2)  # ROM[1] = ハウス内温度
+        else:
+            temp_house = temp_box  # 1台のみ接続時は同一値を補填
+
+        return temp_box, temp_house
     except Exception as e:
         log(f"温度計測失敗: {e}", "ERROR")
-        return None
+        return None, None
 
 def read_vsys():
-    """ VSYS電源電圧を計測 (Pico 2 W 安定化版) """
+    """ VSYS電源電圧を計測 """
     try:
-        vsys_pin = Pin(29, Pin.IN)
+        vsys_pin = Pin(VSYS_ADC_NUM, Pin.IN)
         vsys_adc = ADC(vsys_pin)
         time.sleep_ms(10)
         
@@ -126,7 +133,7 @@ def read_vsys():
         return None
 
 # ==================================================
-# 4. 通信処理 (動的AP選択 & Ubidots 送信)
+# 4. 通信処理 (動的AP選択 & GAS 送信)
 # ==================================================
 def scan_and_connect_best():
     """ 周辺スキャンを実施し、登録済みAPを電波強度順に試行して接続 """
@@ -190,7 +197,6 @@ def scan_and_connect_best():
 
         log(f"🎯 選択AP ({idx}/{len(candidate_aps)}): '{target_ssid}' ({target_rssi}dBm) 接続試行...", "INFO")
         
-        # Wi-Fi切断後の安定化処理
         try:
             wlan.disconnect()
         except Exception:
@@ -221,23 +227,22 @@ def scan_and_connect_best():
 
     return False, None
 
-def send_to_ubidots(payload):
-    """ UbidotsへHTTP POSTで送信 (詳細エラーログ付き) """
-    url = f"http://industrial.api.ubidots.com/api/v1.6/devices/{DEVICE_LABEL}"
-    headers = {
-        "X-Auth-Token": UBIDOTS_TOKEN,
-        "Content-Type": "application/json"
-    }
-    
+def send_to_gas(payload):
+    """ GAS Web AppへHTTP POSTでデータ送信 """
+    if not GAS_URL:
+        log("config.py に GAS_URL が設定されていません", "ERROR")
+        return False
+
+    headers = {"Content-Type": "application/json"}
     try:
-        response = urequests.post(url, json=payload, headers=headers)
+        response = urequests.post(GAS_URL, json=payload, headers=headers)
         status = response.status_code
-        if status not in (200, 201):
-            log(f"Ubidots送信エラー (Status: {status}): {response.text}", "WARN")
+        if status != 200:
+            log(f"GAS送信エラー (Status: {status}): {response.text}", "WARN")
         response.close()
-        return status in (200, 201)
+        return status == 200
     except Exception as e:
-        log(f"Ubidots送信例外: {e}", "ERROR")
+        log(f"GAS送信例外: {e}", "ERROR")
         return False
 
 # ==================================================
@@ -328,7 +333,7 @@ def flush_buffer():
     remaining = []
 
     for idx, item in enumerate(buffer, 1):
-        success = send_to_ubidots(item)
+        success = send_to_gas(item)
         if success:
             log(f"  └ 成功 ({idx}/{len(buffer)})", "INFO")
             time.sleep_ms(200)
@@ -352,10 +357,10 @@ def flush_buffer():
 # 7. メイン実行シーケンス (5分周期ループ)
 # ==================================================
 def run_one_cycle():
-    """ 1回分の「計測 → 接続 → (毎サイクルOTA確認) → 送信/バッファ → 切断」シーケンス """
+    """ 1回分の「計測 → 接続 → OTA確認 → 送信/バッファ → 切断」シーケンス """
     # 1. センサー計測
     led.value(1)
-    temp = read_temperature()
+    temp_box, temp_house = read_temperatures()
     vsys = read_vsys()
     led.value(0)
 
@@ -366,34 +371,34 @@ def run_one_cycle():
     if wifi_ok:
         check_github_ota()
 
-    # 4. ペイロード作成 (Ubidots用タイムスタンプ構造)
-    now_ts = get_current_timestamp_ms()
-    payload = {}
-
-    if temp is not None:
-        payload["temperature"] = {"value": temp, "timestamp": now_ts}
-    if vsys is not None:
-        payload["vsys_voltage"] = {"value": vsys, "timestamp": now_ts}
-    if rssi is not None:
-        payload["rssi"] = {"value": rssi, "timestamp": now_ts}
+    # 4. ペイロード作成 (GAS送信仕様)
+    payload = {
+        "device_id": DEVICE_LABEL,
+        "temp_box": temp_box,
+        "temp_house": temp_house,
+        "vsys_voltage": vsys,
+        "rssi": rssi
+    }
 
     # 5. 送信またはバッファリング
-    if wifi_ok and payload:
-        log(f"計測完了 -> 温度: {temp}℃ / VSYS: {vsys}V / RSSI: {rssi}dBm", "INFO")
+    if wifi_ok and temp_box is not None:
+        log(f"計測完了 -> BOX: {temp_box}℃ / ハウス: {temp_house}℃ / VSYS: {vsys}V / RSSI: {rssi}dBm", "INFO")
+        
+        # 未送信バッファがあれば先に送信
         flush_buffer()
         
-        log("Ubidotsへ最新データを送信中...", "INFO")
-        if send_to_ubidots(payload):
+        log("GASへ最新データを送信中...", "INFO")
+        if send_to_gas(payload):
             log("★ 最新データの送信成功!", "INFO")
         else:
             log("❌ 送信失敗。バッファへ退避します", "WARN")
             save_to_buffer(payload)
     else:
-        log(f"オフライン計測 -> 温度: {temp}℃ / VSYS: {vsys}V", "WARN")
-        if payload:
+        log(f"オフライン計測 -> BOX: {temp_box}℃ / ハウス: {temp_house}℃ / VSYS: {vsys}V", "WARN")
+        if temp_box is not None:
             save_to_buffer(payload)
             
-    # 6. 切断
+    # 6. 通信切断（省電力化）
     try:
         wlan = network.WLAN(network.STA_IF)
         if wlan.isconnected():
@@ -427,3 +432,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
+
+### まとめと動作のポイント
+* `main.py` を上記のコードに置き換えて保存することで、システムの GAS バックエンドと完全に対応した動作になります。
+* Thonny等で実行し、ターミナルログで `BOX: XX℃ / ハウス: XX℃` のように両方の温度が正常取得され、`GASデータ送信成功!` が表示されるかご確認ください。
