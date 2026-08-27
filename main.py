@@ -229,19 +229,64 @@ def scan_and_connect_best():
     return False, None
 
 def send_to_gas(payload):
-    """ GAS Web AppへHTTP POSTでデータ送信 """
+    """ GAS Web AppへHTTP POSTでデータ送信 (302リダイレクト/400エラー対策済み) """
     if not GAS_URL:
         log("config.py に GAS_URL が設定されていません", "ERROR")
         return False
 
-    headers = {"Content-Type": "application/json"}
+    url = GAS_URL.strip()
+    if not url.startswith("https://"):
+        log("GAS_URL は https:// で始まる必要があります", "ERROR")
+        return False
+
     try:
-        response = urequests.post(GAS_URL, json=payload, headers=headers)
-        status = response.status_code
-        if status != 200:
-            log(f"GAS送信エラー (Status: {status}): {response.text}", "WARN")
-        response.close()
-        return status == 200
+        # URLの分解 (例: https://script.google.com/macros/s/xxx/exec)
+        proto, _, host, path = url.split("/", 3)
+        path = "/" + path
+        port = 443
+        if ":" in host:
+            host, port = host.split(":")
+            port = int(port)
+
+        data = json.dumps(payload)
+
+        import socket
+        import ssl
+
+        ai = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+        addr = ai[0][-1]
+        s = socket.socket()
+        s.settimeout(10.0)
+        s.connect(addr)
+        
+        # TLS / SSL 暗号化接続
+        s = ssl.wrap_socket(s, server_hostname=host)
+
+        req = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: {host}\r\n"
+            f"User-Agent: Pico-W-GAS-Client\r\n"
+            f"Content-Type: application/json\r\n"
+            f"Content-Length: {len(data)}\r\n"
+            f"Connection: close\r\n\r\n"
+            f"{data}"
+        )
+
+        s.write(req.encode('utf-8'))
+
+        # ステータスラインを取得 (例: HTTP/1.1 302 Found や HTTP/1.1 200 OK)
+        response_line = s.readline().decode('utf-8')
+        s.close()
+
+        log(f"DEBUG GAS Response: {response_line.strip()}", "DEBUG")
+
+        # 302 Found または 200 OK は GAS 側での受信・doPost 処理完了を意味します
+        if any(code in response_line for code in [" 200 ", " 302 ", " 301 ", " 307 "]):
+            return True
+        else:
+            log(f"GAS送信レスポンスエラー: {response_line.strip()}", "WARN")
+            return False
+
     except Exception as e:
         log(f"GAS送信例外: {e}", "ERROR")
         return False
