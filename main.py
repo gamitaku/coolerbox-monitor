@@ -12,6 +12,7 @@ import config    # config.py を読み込み
 # ==================================================
 # 1. システム設定・機体選択
 # ==================================================
+VERSION = "2.0.0-GAS"
 DEVICE_NAME = config.DEVICE_NAME
 GAS_URL = getattr(config, "GAS_URL", None)
 BUFFER_FILE = "unsent_buffer.json"  # 未送信データ保持用ファイル
@@ -281,13 +282,18 @@ def check_github_ota():
                 pass
 
             if remote_code != local_code:
+                # GAS記述が含まれていない旧コード（Ubidots版等）による誤上書きを防止
+                if "GAS_URL" not in remote_code and "send_to_gas" not in remote_code:
+                    log("⚠️ GitHub上のコードが旧バージョン(Ubidots版等)のため、OTA上書きを安全にスキップしました。", "WARN")
+                    return
+
                 log("🔄 GitHub上に新しい更新を検出しました！ 書き換えて再起動します...", "WARN")
                 with open("main.py", "w") as f:
                     f.write(remote_code)
                 time.sleep(1)
                 machine.reset()  # 本体再起動
             else:
-                log("✅ コードは最新状態です (差分なし)", "INFO")
+                log(f"✅ コードは最新状態です (Ver: {VERSION})", "INFO")
         else:
             log(f"GitHub取得エラー: ステータスコード {res.status_code}", "WARN")
             res.close()
