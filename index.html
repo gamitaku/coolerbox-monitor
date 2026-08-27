@@ -1,439 +1,820 @@
-import network
-import time
-import json
-import os
-import machine
-from machine import Pin, ADC
-import onewire, ds18x20
-import urequests
-import ntptime   # NTP時刻同期用
-import config    # config.py を読み込み
-
-# ==================================================
-# 1. システム設定・機体選択
-# ==================================================
-DEVICE_NAME = config.DEVICE_NAME
-GAS_URL = getattr(config, "GAS_URL", None)
-BUFFER_FILE = "unsent_buffer.json"  # 未送信データ保持用ファイル
-MAX_BUFFER_SIZE = 500              # 最大バッファ件数
-INTERVAL_SEC = 300                  # 5分（300秒）周期
-
-# --------------------------------------------------
-# config.py から APリストを柔軟に自動取得
-# --------------------------------------------------
-AP_LIST = getattr(config, "WIFI_AP_LIST", None) or getattr(config, "AP_LIST", None)
-if not AP_LIST:
-    wifi_ssid = getattr(config, "WIFI_SSID", None)
-    wifi_pass = getattr(config, "WIFI_PASS", None)
-    if wifi_ssid and wifi_pass:
-        AP_LIST = [{"ssid": wifi_ssid, "pass": wifi_pass}]
-    else:
-        AP_LIST = []
-
-# --------------------------------------------------
-# プロファイル設定（複数台並列運用の自動マッピング）
-# --------------------------------------------------
-DEVICE_PROFILES = {
-    "保冷BOX本機": {
-        "DEVICE_LABEL": "pico-w-main",
-        "VSYS_COEFF": 0.00014793
-    },
-    "検証機": {
-        "DEVICE_LABEL": "pico-2w-test",
-        "VSYS_COEFF": 0.00014943  # Pico 2 W 専用キャリブレーション値
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>📷 保冷BOX・電源ステータス 統合監視ダッシュボード</title>
+  <!-- Chart.js（グラフ描画ライブラリ） -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --primary: #2563eb;
+      --border: #e2e8f0;
+      --radius: 12px;
     }
-}
 
-active_profile = DEVICE_PROFILES["検証機"]
-for name_key in DEVICE_PROFILES:
-    if name_key in DEVICE_NAME:
-        active_profile = DEVICE_PROFILES[name_key]
-        break
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text-main);
+      margin: 0;
+      padding: 12px;
+      -webkit-tap-highlight-color: transparent;
+    }
 
-DEVICE_LABEL = active_profile["DEVICE_LABEL"]
-VSYS_COEFF = active_profile["VSYS_COEFF"]
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
 
-# ピン配置
-DS_PIN_NUM = 15     # GP15 (1-Wire データ線)
-VSYS_ADC_NUM = 29   # GP29 (ADC3)
-LED_PIN_NUM = "LED"
+    /* ヘッダー */
+    .app-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+    }
+    .app-header h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin: 0;
+      color: var(--text-main);
+    }
 
-# ==================================================
-# 2. ハードウェア初期化
-# ==================================================
-led = Pin(LED_PIN_NUM, Pin.OUT)
-ow = onewire.OneWire(Pin(DS_PIN_NUM))
-ds = ds18x20.DS18X20(ow)
+    /* デバイスセクション */
+    .device-section {
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      padding: 16px;
+      border: 1px solid var(--border);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .device-title-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 2px solid var(--primary);
+      padding-bottom: 8px;
+      margin-bottom: 14px;
+    }
+    .device-title {
+      font-size: 1rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
 
-# ==================================================
-# 3. ログ・センサー計測処理
-# ==================================================
-def log(msg, level="INFO"):
-    """ 標準ログ出力関数 """
-    print(f"[{DEVICE_NAME}] [{level}] {msg}")
+    /* グリッドレイアウト（PCは3列、スマホは1列） */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(1, 1fr);
+      gap: 12px;
+    }
+    @media (min-width: 768px) {
+      .metrics-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
 
-def sync_ntp_time():
-    """ Wi-Fi接続時にNTPサーバーから時刻を取得してRTCを更新 """
-    ntptime.host = "ntp.nict.jp"  # NICTのNTPサーバー
-    for retry in range(3):
-        try:
-            ntptime.settime()
-            log("⏰ NTP時刻同期に成功しました", "INFO")
-            return True
-        except Exception as e:
-            time.sleep(1)
-    log("⚠️ NTP時刻同期に失敗しました", "WARN")
-    return False
+    /* 指標カード */
+    .stat-card {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      height: 100%;
+    }
 
-def read_temperatures():
-    """ DS18B20から温度を2軸分取得（ROM ID昇順で識別） """
-    try:
-        roms = ds.scan()
-        if not roms:
-            log("警告: DS18B20未検出 -> 配線を確認してください", "WARN")
-            return None, None
-        
-        # ROM IDを昇順ソートして常に同じセンサーを特定
-        roms = sorted(roms)
+    .stat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 6px;
+      min-height: 22px;
+    }
+    .stat-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
 
-        ds.convert_temp()
-        time.sleep_ms(750)
+    /* ステータスバッジ (崩れ防止) */
+    .status-badge {
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 12px;
+      white-space: nowrap;
+      display: inline-block;
+      max-width: 140px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .status-badge.ok { background: #dcfce7; color: #15803d; }
+    .status-badge.warn { background: #fef3c7; color: #b45309; }
+    .status-badge.alert { background: #fee2e2; color: #b91c1c; }
+    .status-badge.info { background: #e0f2fe; color: #0369a1; }
 
-        temp_box = round(ds.read_temp(roms[0]), 2)  # ROM[0] = BOX内温度
-        
-        temp_house = None
-        if len(roms) >= 2:
-            temp_house = round(ds.read_temp(roms[1]), 2)  # ROM[1] = ハウス内温度
-        else:
-            temp_house = temp_box  # 1台のみ接続時は同一値を補填
+    .stat-value {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: var(--text-main);
+      line-height: 1.2;
+      margin-bottom: 8px;
+    }
+    .stat-value span {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-left: 2px;
+    }
 
-        return temp_box, temp_house
-    except Exception as e:
-        log(f"温度計測失敗: {e}", "ERROR")
-        return None, None
+    /* グラフ描画エリア */
+    .chart-box {
+      width: 100%;
+      height: 100px;
+      position: relative;
+      cursor: pointer;
+    }
 
-def read_vsys():
-    """ VSYS電源電圧を計測 """
-    try:
-        vsys_pin = Pin(VSYS_ADC_NUM, Pin.IN)
-        vsys_adc = ADC(vsys_pin)
-        time.sleep_ms(10)
-        
-        total_raw = 0
-        for _ in range(10):
-            total_raw += vsys_adc.read_u16()
-            time.sleep_ms(2)
-        raw = total_raw // 10
-        
-        voltage = raw * VSYS_COEFF
-        log(f"DEBUG VSYS raw: {raw}, calc: {voltage:.2f}V", "DEBUG")
-        return round(voltage, 2)
-    except Exception as e:
-        log(f"VSYS計測失敗: {e}", "ERROR")
-        return None
+    /* モーダル表示 */
+    .modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+    }
+    .modal-content {
+      background: white;
+      width: 100%;
+      max-width: 800px;
+      height: 70vh;
+      max-height: 500px;
+      border-radius: var(--radius);
+      padding: 16px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+    .close-btn {
+      position: absolute;
+      top: -12px;
+      right: -12px;
+      background: #ef4444;
+      color: white;
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      font-weight: bold;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
 
-# ==================================================
-# 4. 通信処理 (動的AP選択 & GAS 送信)
-# ==================================================
-def scan_and_connect_best():
-    """ 周辺スキャンを実施し、登録済みAPを電波強度順に試行して接続 """
-    wlan = network.WLAN(network.STA_IF)
+    /* AI 分析エリア */
+    .ai-section {
+      background: #f0f9ff;
+      border: 1px solid #bae6fd;
+      border-radius: var(--radius);
+      padding: 16px;
+    }
+    .ai-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .btn-ai {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-weight: bold;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    .prediction-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .pred-card {
+      background: white;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border-left: 4px solid var(--primary);
+      border: 1px solid var(--border);
+    }
+
+    /* 設定エリア */
+    details summary {
+      font-weight: 700;
+      cursor: pointer;
+      padding: 6px 0;
+      color: var(--text-muted);
+      user-select: none;
+    }
+    .setting-group {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+    }
+    .form-item {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .form-item label {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--text-muted);
+    }
+    .form-item input {
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+    .btn-save {
+      background: #10b981;
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      margin-top: 12px;
+      width: 100%;
+    }
+    .btn-test {
+      background: #06b6d4;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 0.8rem;
+      margin-top: 4px;
+    }
+    .log-box {
+      background: #0f172a;
+      color: #38bdf8;
+      font-family: monospace;
+      font-size: 0.75rem;
+      padding: 10px;
+      border-radius: 6px;
+      height: 90px;
+      overflow-y: auto;
+      margin-top: 8px;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  
+  <div class="app-header">
+    <h1>📷 保冷BOX・電源 統合監視</h1>
+  </div>
+
+  <!-- 1. 1号機: Pico W -->
+  <div class="device-section">
+    <div class="device-title-bar">
+      <div class="device-title">📍 保冷BOX内部 (Pico W)</div>
+    </div>
     
-    if not wlan.active():
-        wlan.active(True)
-        time.sleep_ms(500)
+    <div class="metrics-grid">
+      <!-- 温度 -->
+      <div class="stat-card">
+        <div>
+          <div class="stat-header">
+            <span class="stat-label">BOX内温度</span>
+            <span class="status-badge info" id="status-temp">データ取得中</span>
+          </div>
+          <div class="stat-value" id="val-temp">-- <span>°C</span></div>
+        </div>
+        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d1', '1号機: BOX内温度推移 (℃)', '#ef4444')">
+          <canvas id="chart-d1"></canvas>
+        </div>
+      </div>
+
+      <!-- 電圧 -->
+      <div class="stat-card">
+        <div>
+          <div class="stat-header">
+            <span class="stat-label">バッテリー残量 / 電圧</span>
+            <span class="status-badge info" id="status-bat">データ取得中</span>
+          </div>
+          <div class="stat-value" id="val-bat">-- <span>%</span></div>
+        </div>
+        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d2', '1号機: 電圧推移 (V)', '#3b82f6')">
+          <canvas id="chart-d2"></canvas>
+        </div>
+      </div>
+
+      <!-- 電波強度 -->
+      <div class="stat-card">
+        <div>
+          <div class="stat-header">
+            <span class="stat-label">通信ステータス</span>
+            <span class="status-badge info" id="val-last-time">更新: --:--</span>
+          </div>
+          <div class="stat-value" id="val-rssi">-- <span>dBm</span></div>
+        </div>
+        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d3', '1号機: 電波強度推移 (dBm)', '#8b5cf6')">
+          <canvas id="chart-d3"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. 2号機: Pico 2 W -->
+  <div class="device-section">
+    <div class="device-title-bar" style="border-bottom-color: #ec4899;">
+      <div class="device-title">🧪 検証機1 (Pico 2 W)</div>
+    </div>
     
-    try:
-        wlan.config(pm=0xa11154) # 省電力OFF (パフォーマンス優先)
-    except Exception:
-        pass
+    <div class="metrics-grid">
+      <!-- 温度 -->
+      <div class="stat-card">
+        <div>
+          <div class="stat-header">
+            <span class="stat-label">検証機1 温度</span>
+            <span class="status-badge info" id="status-test-temp">データ取得中</span>
+          </div>
+          <div class="stat-value" id="val-test-temp">-- <span>°C</span></div>
+        </div>
+        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d4', '2号機: 温度推移 (℃)', '#ec4899')">
+          <canvas id="chart-d4"></canvas>
+        </div>
+      </div>
 
-    log("🔍 周辺Wi-Fiスキャン中...", "DIAG")
-    scanned = []
-    for retry in range(1, 4):
-        try:
-            scanned = wlan.scan()
-            if scanned:
-                break
-            time.sleep(1)
-        except Exception as e:
-            log(f"スキャン一時失敗 (retry {retry}): {e}", "DEBUG")
-            time.sleep(1)
+      <!-- 電圧 -->
+      <div class="stat-card">
+        <div>
+          <div class="stat-header">
+            <span class="stat-label">バッテリー残量 / 電圧</span>
+            <span class="status-badge info" id="status-test-bat">データ取得中</span>
+          </div>
+          <div class="stat-value" id="val-test-bat">-- <span>%</span></div>
+        </div>
+        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d5', '2号機: 電圧推移 (V)', '#10b981')">
+          <canvas id="chart-d5"></canvas>
+        </div>
+      </div>
 
-    if not scanned:
-        log("⚠️ 周囲に2.4GHz帯のWi-Fiが見つかりません", "WARN")
-        return False, None
+      <!-- 電波強度 -->
+      <div class="stat-card">
+        <div>
+          <div class="stat-header">
+            <span class="stat-label">通信ステータス</span>
+            <span class="status-badge info" id="val-test-last-time">更新: --:--</span>
+          </div>
+          <div class="stat-value" id="val-test-rssi">-- <span>dBm</span></div>
+        </div>
+        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d6', '2号機: 電波強度推移 (dBm)', '#f59e0b')">
+          <canvas id="chart-d6"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
 
-    # 抽出処理
-    candidate_aps = []
-    for net in scanned:
-        ssid = net[0].decode('utf-8')
-        rssi = net[3]
-        
-        for ap in AP_LIST:
-            target_ssid = ap.get("ssid") or ap.get("SSID")
-            if ssid and target_ssid and ssid == target_ssid:
-                candidate_aps.append({
-                    "ssid": target_ssid,
-                    "pass": ap.get("pass") or ap.get("PASS"),
-                    "rssi": rssi
-                })
+  <!-- 3. AI 分析 & 予測 -->
+  <div class="ai-section">
+    <div class="ai-header">
+      <div style="font-weight:bold; color:#0369a1; font-size: 0.95rem;">🤖 Gemini AI 状況分析 & 予測</div>
+      <button class="btn-ai" onclick="runAiAnalysis()">AI分析更新</button>
+    </div>
+    <div id="ai-response-text" style="font-size:0.82rem; color:#1e293b; line-height:1.4;">
+      データ取得時に、現在の温度・電圧推移から次回交換が必要になる推奨時刻を提示します。
+    </div>
 
-    if not candidate_aps:
-        log("⚠️ 周囲に登録済みのWi-Fiが見つかりません", "WARN")
-        return False, None
+    <div class="prediction-grid">
+      <div class="pred-card" style="border-left-color: #ef4444;">
+        <div style="font-size:0.72rem; color:var(--text-muted);">🔥 35℃超え予想</div>
+        <div style="font-size:1rem; font-weight:bold; color:#dc2626; margin-top:2px;" id="pred-hot-time">未計算</div>
+      </div>
+      <div class="pred-card" style="border-left-color: #3b82f6;">
+        <div style="font-size:0.72rem; color:var(--text-muted);">🧊 保冷剤交換推奨</div>
+        <div style="font-size:1rem; font-weight:bold; color:#1d4ed8; margin-top:2px;" id="pred-ice-time">未計算</div>
+      </div>
+      <div class="pred-card" style="border-left-color: #f59e0b;">
+        <div style="font-size:0.72rem; color:var(--text-muted);">🔋 バッテリー交換推奨</div>
+        <div style="font-size:1rem; font-weight:bold; color:#b45309; margin-top:2px;" id="pred-bat-time">未計算</div>
+      </div>
+    </div>
+  </div>
 
-    # 電波強度順にソート
-    candidate_aps.sort(key=lambda x: x["rssi"], reverse=True)
+  <!-- 4. 設定エリア -->
+  <div class="device-section">
+    <details>
+      <summary>⚙️ システム設定・Ubidotsトークン・LINE通知設定</summary>
+      
+      <div class="setting-group">
+        <div class="form-item">
+          <label>Ubidots API Token</label>
+          <input type="text" id="cfg-ubidots-token" placeholder="BBUS-...">
+        </div>
+        <div class="form-item">
+          <label>温度上限アラート閾値 (°C)</label>
+          <input type="number" id="cfg-temp-alert" value="15.0" step="0.5">
+        </div>
+        <div class="form-item">
+          <label>バッテリー残量下限アラート閾値 (%)</label>
+          <input type="number" id="cfg-bat-alert" value="20" min="5" max="50">
+        </div>
+        <div class="form-item">
+          <label>LINE Webhook URL (GAS Webアプリ)</label>
+          <input type="text" id="cfg-line-webhook" placeholder="https://script.google.com/macros/s/.../exec">
+          <button class="btn-test" onclick="testLineNotification()">🚀 LINE通知テスト送信</button>
+        </div>
+      </div>
 
-    # スキャン後の安定化待機
-    time.sleep_ms(1500)
+      <div style="margin-top: 12px;">
+        <div style="font-size:0.78rem; font-weight:bold; color:var(--text-muted);">📋 システム実行・通信ログ</div>
+        <div class="log-box" id="system-log">[System] ログモニター待機中...\n</div>
+      </div>
 
-    # 接続試行
-    for idx, target in enumerate(candidate_aps, 1):
-        target_ssid = target["ssid"]
-        target_pass = target["pass"]
-        target_rssi = target["rssi"]
+      <hr style="border: 0; border-top: 1px solid var(--border); margin: 15px 0;">
+      
+      <div style="font-weight:bold; font-size:0.82rem; color:var(--text-muted); margin-bottom:8px;">⏰ LINE定時通知時刻 (1日3回)</div>
+      <div class="setting-group">
+        <div class="form-item">
+          <label>通知時刻 1</label>
+          <input type="time" id="cfg-time-1" value="08:00">
+        </div>
+        <div class="form-item">
+          <label>通知時刻 2</label>
+          <input type="time" id="cfg-time-2" value="12:00">
+        </div>
+        <div class="form-item">
+          <label>通知時刻 3</label>
+          <input type="time" id="cfg-time-3" value="18:00">
+        </div>
+      </div>
 
-        log(f"🎯 選択AP ({idx}/{len(candidate_aps)}): '{target_ssid}' ({target_rssi}dBm) 接続試行...", "INFO")
-        
-        try:
-            wlan.disconnect()
-        except Exception:
-            pass
-        time.sleep_ms(1000)
+      <button class="btn-save" onclick="saveSettings()">設定を保存</button>
+    </details>
+  </div>
 
-        wlan.connect(target_ssid, target_pass)
+  <footer style="text-align: center; margin: 10px 0; font-size: 0.75rem; color: var(--text-muted);">
+    <a href="./privacy.html" style="color: var(--text-muted); margin-right: 12px;">プライバシーポリシー</a>
+    <a href="./terms.html" style="color: var(--text-muted);">利用規約</a>
+  </footer>
+</div>
 
-        # 接続確認ループ
-        timeout = 20
-        while timeout > 0:
-            if wlan.isconnected():
-                ip = wlan.ifconfig()[0]
-                log(f"✅ Wi-Fi接続成功! IP: {ip}", "INFO")
-                # Wi-Fi接続成功時に NTP で時刻同期
-                sync_ntp_time()
-                return True, target_rssi
-            
-            st = wlan.status()
-            if st in (-2, -3):
-                log(f"DEBUG: 明らかなエラー検出 (status={st})", "DEBUG")
-                break
+<!-- モーダル -->
+<div id="chartModal" class="modal" onclick="closeModal()">
+  <div class="modal-content" onclick="event.stopPropagation()">
+    <button class="close-btn" onclick="closeModal()">✕</button>
+    <div style="width: 100%; height: 100%; position: relative;">
+      <canvas id="modalCanvas"></canvas>
+    </div>
+  </div>
+</div>
 
-            time.sleep(1)
-            timeout -= 1
+<script>
+  let chartD1, chartD2, chartD3, chartD4, chartD5, chartD6, modalChart;
+  let cacheData = { d1: [], d2: [], d3: [], d4: [], d5: [], d6: [] };
+  let currentTemp = "--";
+  let currentBatPercent = "--";
+  let lastNotifiedMinute = "";
 
-        log(f"❌ '{target_ssid}' 接続失敗。次のAPへ...", "WARN")
+  function writeLog(msg) {
+    const logBox = document.getElementById('system-log');
+    if (!logBox) return;
+    const now = new Date().toLocaleTimeString('ja-JP');
+    logBox.innerText += `[${now}] ${msg}\n`;
+    logBox.scrollTop = logBox.scrollHeight;
+  }
 
-    return False, None
+  async function fetchUbidotsVariable(deviceLabel, variableLabel, token) {
+    const url = `https://industrial.api.ubidots.com/api/v1.6/devices/${deviceLabel}/${variableLabel}/values?page_size=20`;
+    try {
+      const res = await fetch(url, { headers: { "X-Auth-Token": token } });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return (data.results || []).reverse();
+    } catch (e) {
+      writeLog(`[Ubidots Error] ${deviceLabel}/${variableLabel}: ` + e.message);
+      return [];
+    }
+  }
 
-def send_to_gas(payload):
-    """ GAS Web AppへHTTP POSTでデータ送信 """
-    if not GAS_URL:
-        log("config.py に GAS_URL が設定されていません", "ERROR")
-        return False
+  async function fetchAllUbidotsData() {
+    const token = document.getElementById('cfg-ubidots-token').value.trim() || "BBUS-d7nOyVvjWHEUQfqS9LRVevB6yiTnOe";
+    
+    // 1. 本機 (pico-w-main)
+    const mainTemp = await fetchUbidotsVariable("pico-w-main", "temperature", token);
+    const mainVolts = await fetchUbidotsVariable("pico-w-main", "vsys_voltage", token);
+    const mainRssi = await fetchUbidotsVariable("pico-w-main", "rssi", token);
 
-    headers = {"Content-Type": "application/json"}
-    try:
-        response = urequests.post(GAS_URL, json=payload, headers=headers)
-        status = response.status_code
-        if status != 200:
-            log(f"GAS送信エラー (Status: {status}): {response.text}", "WARN")
-        response.close()
-        return status == 200
-    except Exception as e:
-        log(f"GAS送信例外: {e}", "ERROR")
-        return False
+    // 2. 検証機 (pico-2w-test)
+    const testTemp = await fetchUbidotsVariable("pico-2w-test", "temperature", token);
+    const testVolts = await fetchUbidotsVariable("pico-2w-test", "vsys_voltage", token);
+    const testRssi = await fetchUbidotsVariable("pico-2w-test", "rssi", token);
 
-# ==================================================
-# 5. GitHub OTA（自動更新）処理
-# ==================================================
-def check_github_ota():
-    """ GitHub上の最新 main.py とローカルを比較し、差分があれば上書きして再起動 """
-    user = getattr(config, "GITHUB_USER", None)
-    repo = getattr(config, "GITHUB_REPO", None)
-    branch = getattr(config, "GITHUB_BRANCH", "main")
-    token = getattr(config, "GITHUB_TOKEN", None)
+    cacheData.d1 = mainTemp;
+    cacheData.d2 = mainVolts;
+    cacheData.d3 = mainRssi;
+    cacheData.d4 = testTemp;
+    cacheData.d5 = testVolts;
+    cacheData.d6 = testRssi;
 
-    if not (user and repo and token):
-        log("OTAチェック定義が config.py に不十分なためスキップします", "WARN")
-        return
-
-    url = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/main.py"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "User-Agent": "Pico-OTA"
+    // A. 1号機 (Pico W)
+    if (mainTemp.length > 0) {
+      const latestTemp = mainTemp[mainTemp.length - 1].value;
+      currentTemp = latestTemp.toFixed(2);
+      document.getElementById('val-temp').innerHTML = `${currentTemp} <span>°C</span>`;
+    }
+    if (mainVolts.length > 0) {
+      const latestVolts = mainVolts[mainVolts.length - 1].value;
+      const bat = calcBatteryInfo(latestVolts);
+      currentBatPercent = bat.percent;
+      document.getElementById('val-bat').innerHTML = `${bat.percent} <span>% (${latestVolts.toFixed(2)}V)</span>`;
+      updateDeviceStatus('status-temp', 'status-bat', parseFloat(currentTemp), latestVolts);
+      checkThresholdsAndAlert(parseFloat(currentTemp), latestVolts);
+    }
+    if (mainRssi.length > 0) {
+      const latestRssi = mainRssi[mainRssi.length - 1].value;
+      document.getElementById('val-rssi').innerHTML = `${latestRssi} <span>dBm</span>`;
+      const lastTime = new Date(mainRssi[mainRssi.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+      document.getElementById('val-last-time').innerText = `更新: ${lastTime}`;
     }
 
-    log("☁️ GitHub の最新コード（main.py）を確認中...", "INFO")
-    try:
-        res = urequests.get(url, headers=headers)
-        if res.status_code == 200:
-            remote_code = res.text
-            res.close()
-
-            # ローカルの main.py と比較
-            local_code = ""
-            try:
-                with open("main.py", "r") as f:
-                    local_code = f.read()
-            except Exception:
-                pass
-
-            if remote_code != local_code:
-                log("🔄 GitHub上に新しい更新を検出しました！ 書き換えて再起動します...", "WARN")
-                with open("main.py", "w") as f:
-                    f.write(remote_code)
-                time.sleep(1)
-                machine.reset()  # 本体再起動
-            else:
-                log("✅ コードは最新状態です (差分なし)", "INFO")
-        else:
-            log(f"GitHub取得エラー: ステータスコード {res.status_code}", "WARN")
-            res.close()
-    except Exception as e:
-        log(f"OTA更新確認例外: {e}", "ERROR")
-
-# ==================================================
-# 6. ローカルバッファ制御処理 (オフライン対策)
-# ==================================================
-def save_to_buffer(payload_item):
-    """ 未送信データを Flash 内の json に一時保存 """
-    buffer = []
-    try:
-        with open(BUFFER_FILE, "r") as f:
-            buffer = json.load(f)
-    except Exception:
-        buffer = []
-
-    buffer.append(payload_item)
-
-    if len(buffer) > MAX_BUFFER_SIZE:
-        buffer.pop(0)
-
-    try:
-        with open(BUFFER_FILE, "w") as f:
-            json.dump(buffer, f)
-        log(f"💾 データをローカルバッファに保存しました (全{len(buffer)}件)", "WARN")
-    except Exception as e:
-        log(f"バッファ保存エラー: {e}", "ERROR")
-
-def flush_buffer():
-    """ Wi-Fi復帰時に溜まったバッファを一括送信 """
-    try:
-        with open(BUFFER_FILE, "r") as f:
-            buffer = json.load(f)
-    except Exception:
-        return
-
-    if not buffer:
-        return
-
-    log(f"📤 蓄積バッファ ({len(buffer)}件) のフラッシュ送信を開始...", "INFO")
-    remaining = []
-
-    for idx, item in enumerate(buffer, 1):
-        success = send_to_gas(item)
-        if success:
-            log(f"  └ 成功 ({idx}/{len(buffer)})", "INFO")
-            time.sleep_ms(200)
-        else:
-            log(f"  └ 再送信失敗。残りを保持します", "WARN")
-            remaining.extend(buffer[idx-1:])
-            break
-
-    if remaining:
-        with open(BUFFER_FILE, "w") as f:
-            json.dump(remaining, f)
-        log(f"⚠️ 一部未送信あり。残り: {len(remaining)}件", "WARN")
-    else:
-        try:
-            os.remove(BUFFER_FILE)
-            log("✅ バッファデータをすべて正常送信・クリアしました！", "INFO")
-        except Exception:
-            pass
-
-# ==================================================
-# 7. メイン実行シーケンス (5分周期ループ)
-# ==================================================
-def run_one_cycle():
-    """ 1回分の「計測 → 接続 → OTA確認 → 送信/バッファ → 切断」シーケンス """
-    # 1. センサー計測
-    led.value(1)
-    temp_box, temp_house = read_temperatures()
-    vsys = read_vsys()
-    led.value(0)
-
-    # 2. Wi-Fi 接続
-    wifi_ok, rssi = scan_and_connect_best()
-
-    # 3. 毎サイクル GitHub OTA チェックを実施 (Wi-Fi接続時)
-    if wifi_ok:
-        check_github_ota()
-
-    # 4. ペイロード作成 (GAS送信仕様)
-    payload = {
-        "device_id": DEVICE_LABEL,
-        "temp_box": temp_box,
-        "temp_house": temp_house,
-        "vsys_voltage": vsys,
-        "rssi": rssi
+    // B. 2号機 (Pico 2 W)
+    if (testTemp.length > 0) {
+      const val = testTemp[testTemp.length - 1].value;
+      document.getElementById('val-test-temp').innerHTML = `${val.toFixed(2)} <span>°C</span>`;
+    }
+    if (testVolts.length > 0) {
+      const val = testVolts[testVolts.length - 1].value;
+      const bat = calcBatteryInfo(val);
+      document.getElementById('val-test-bat').innerHTML = `${bat.percent} <span>% (${val.toFixed(2)}V)</span>`;
+      const tVal = testTemp.length > 0 ? testTemp[testTemp.length - 1].value : NaN;
+      updateDeviceStatus('status-test-temp', 'status-test-bat', tVal, val);
+    }
+    if (testRssi.length > 0) {
+      const val = testRssi[testRssi.length - 1].value;
+      document.getElementById('val-test-rssi').innerHTML = `${val} <span>dBm</span>`;
+      const lastTime = new Date(testRssi[testRssi.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+      document.getElementById('val-test-last-time').innerText = `更新: ${lastTime}`;
+    } else if (testVolts.length > 0) {
+      const lastTime = new Date(testVolts[testVolts.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+      document.getElementById('val-test-last-time').innerText = `更新: ${lastTime}`;
     }
 
-    # 5. 送信またはバッファリング
-    if wifi_ok and temp_box is not None:
-        log(f"計測完了 -> BOX: {temp_box}℃ / ハウス: {temp_house}℃ / VSYS: {vsys}V / RSSI: {rssi}dBm", "INFO")
-        
-        # 未送信バッファがあれば先に送信
-        flush_buffer()
-        
-        log("GASへ最新データを送信中...", "INFO")
-        if send_to_gas(payload):
-            log("★ 最新データの送信成功!", "INFO")
-        else:
-            log("❌ 送信失敗。バッファへ退避します", "WARN")
-            save_to_buffer(payload)
-    else:
-        log(f"オフライン計測 -> BOX: {temp_box}℃ / ハウス: {temp_house}℃ / VSYS: {vsys}V", "WARN")
-        if temp_box is not None:
-            save_to_buffer(payload)
-            
-    # 6. 通信切断（省電力化）
-    try:
-        wlan = network.WLAN(network.STA_IF)
-        if wlan.isconnected():
-            wlan.disconnect()
-    except Exception:
-        pass
+    renderCharts();
+    writeLog("データ最新化完了");
+  }
 
-def main():
-    print("=" * 50)
-    print(f"  {DEVICE_NAME} 起動シーケンス (5分周期・毎サイクルOTA/NTP/動的AP/バッファ対応)")
-    print(f"  デバイスラベル: {DEVICE_LABEL}")
-    print("=" * 50)
+  function renderCharts() {
+    chartD1 = drawSingleChart('chart-d1', cacheData.d1, 'BOX内温度 (℃)', '#ef4444', chartD1);
+    chartD2 = drawSingleChart('chart-d2', cacheData.d2, '電圧 (V)', '#3b82f6', chartD2);
+    chartD3 = drawSingleChart('chart-d3', cacheData.d3, '電波強度 (dBm)', '#8b5cf6', chartD3);
+    chartD4 = drawSingleChart('chart-d4', cacheData.d4, '検証機1 温度 (℃)', '#ec4899', chartD4);
+    chartD5 = drawSingleChart('chart-d5', cacheData.d5, '検証機1 電圧 (V)', '#10b981', chartD5);
+    chartD6 = drawSingleChart('chart-d6', cacheData.d6, '検証機1 電波強度 (dBm)', '#f59e0b', chartD6);
+  }
 
-    while True:
-        # NTP同期で時刻が補正されても影響を受けないミリ秒タイマーを使用
-        start_ticks = time.ticks_ms()
-        
-        try:
-            run_one_cycle()
-        except Exception as e:
-            log(f"メインループ内例外発生: {e}", "ERROR")
+  function drawSingleChart(canvasId, seriesData, labelName, color, existingChart) {
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    if (existingChart) existingChart.destroy();
 
-        # 経過ミリ秒を秒に変換して待機時間を計算
-        elapsed_ms = time.ticks_diff(time.ticks_ms(), start_ticks)
-        elapsed_sec = elapsed_ms / 1000.0
-        
-        sleep_time = max(1, int(INTERVAL_SEC - elapsed_sec))
-        
-        log(f"⏳ 処理時間: {elapsed_sec:.1f}秒 ➔ 次の計測まで {sleep_time}秒 待機します", "INFO")
-        time.sleep(sleep_time)
+    const labels = seriesData.map(item => new Date(item.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }));
+    const values = seriesData.map(item => item.value);
 
-if __name__ == "__main__":
-    main()
-```
+    return new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: labelName,
+          data: values,
+          borderColor: color,
+          backgroundColor: color + '15',
+          borderWidth: 2,
+          pointRadius: 2,
+          fill: true,
+          tension: 0.3
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { display: true, ticks: { font: { size: 9 }, color: '#94a3b8' }, grid: { display: false } },
+          y: { display: true, ticks: { font: { size: 9 }, color: '#94a3b8' }, grid: { color: '#f1f5f9' } }
+        }
+      }
+    });
+  }
 
-### まとめと動作のポイント
-* `main.py` を上記のコードに置き換えて保存することで、システムの GAS バックエンドと完全に対応した動作になります。
-* Thonny等で実行し、ターミナルログで `BOX: XX℃ / ハウス: XX℃` のように両方の温度が正常取得され、`GASデータ送信成功!` が表示されるかご確認ください。
+  function calcBatteryInfo(volts) {
+    if (isNaN(volts) || volts <= 0) return { percent: 0, remainHours: "0.0" };
+    let percent = Math.round(((volts - 3.2) / (4.2 - 3.2)) * 100);
+    if (percent > 100) percent = 100;
+    if (percent < 0) percent = 0;
+    let remainHours = (percent / 100) * 20.0;
+    return { percent: percent, remainHours: remainHours.toFixed(1) };
+  }
+
+  function updateDeviceStatus(tempElemId, batElemId, temp, volts) {
+    const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
+    const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
+    const bat = calcBatteryInfo(volts);
+
+    const tempElem = document.getElementById(tempElemId);
+    if (!isNaN(temp)) {
+      if (temp >= alertTemp) {
+        tempElem.innerText = "⚠️ 高温警告";
+        tempElem.className = "status-badge alert";
+      } else if (temp >= alertTemp - 2.0) {
+        tempElem.innerText = "⚡ 温度上昇中";
+        tempElem.className = "status-badge warn";
+      } else {
+        tempElem.innerText = "❄️ 正常";
+        tempElem.className = "status-badge ok";
+      }
+    }
+
+    const batElem = document.getElementById(batElemId);
+    if (!isNaN(volts) && volts > 0) {
+      if (bat.percent <= alertBat) {
+        batElem.innerText = "🪫 残量低下";
+        batElem.className = "status-badge alert";
+      } else if (bat.percent < 40) {
+        batElem.innerText = "⚠️ 交換準備推奨";
+        batElem.className = "status-badge warn";
+      } else {
+        batElem.innerText = "🔋 残量十分";
+        batElem.className = "status-badge ok";
+      }
+    }
+  }
+
+  function checkThresholdsAndAlert(temp, volts) {
+    const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
+    const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
+    const bat = calcBatteryInfo(volts);
+
+    const isTempAlert = !isNaN(temp) && temp >= alertTemp;
+    const isBatAlert = bat.percent <= alertBat && bat.percent > 0;
+
+    const lastTempAlert = localStorage.getItem('state_last_temp_alert') === 'true';
+    const lastBatAlert = localStorage.getItem('state_last_bat_alert') === 'true';
+
+    localStorage.setItem('state_last_temp_alert', isTempAlert);
+    localStorage.setItem('state_last_bat_alert', isBatAlert);
+
+    if ((isTempAlert && !lastTempAlert) || (isBatAlert && !lastBatAlert)) {
+      let alertMsg = `🚨【保冷BOX アラート発報】🚨\n\n`;
+      if (isTempAlert) alertMsg += `🌡️ BOX内温度: ${temp}℃ (閾値: ${alertTemp}℃)\n👉 保冷剤の交換を行ってください。🧊\n\n`;
+      if (isBatAlert) alertMsg += `🔋 バッテリー残量: ${bat.percent}% (${volts}V)\n👉 充電または交換を行ってください。⚡\n\n`;
+      sendLineMessage(alertMsg);
+    }
+  }
+
+  function openModal(targetCanvasId, title, color) {
+    const keyMap = { 'chart-d1': 'd1', 'chart-d2': 'd2', 'chart-d3': 'd3', 'chart-d4': 'd4', 'chart-d5': 'd5', 'chart-d6': 'd6' };
+    const seriesData = cacheData[keyMap[targetCanvasId]] || [];
+    if (seriesData.length === 0) return;
+
+    document.getElementById('chartModal').style.display = 'flex';
+    const ctx = document.getElementById('modalCanvas').getContext('2d');
+    if (modalChart) modalChart.destroy();
+
+    const labels = seriesData.map(item => new Date(item.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }));
+    const values = seriesData.map(item => item.value);
+
+    modalChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: title,
+          data: values,
+          borderColor: color,
+          backgroundColor: color + '20',
+          borderWidth: 3,
+          pointRadius: 4,
+          fill: true,
+          tension: 0.3
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false
+      }
+    });
+  }
+
+  function closeModal() {
+    document.getElementById('chartModal').style.display = 'none';
+    if (modalChart) { modalChart.destroy(); modalChart = null; }
+  }
+
+  function loadSettings() {
+    document.getElementById('cfg-ubidots-token').value = localStorage.getItem('cfg_ubidots_token') || "BBUS-d7nOyVvjWHEUQfqS9LRVevB6yiTnOe";
+    document.getElementById('cfg-temp-alert').value = localStorage.getItem('cfg_temp_alert') || "15.0";
+    document.getElementById('cfg-bat-alert').value = localStorage.getItem('cfg_bat_alert') || "20";
+    document.getElementById('cfg-line-webhook').value = localStorage.getItem('cfg_line_webhook') || "";
+    document.getElementById('cfg-time-1').value = localStorage.getItem('cfg_time_1') || "08:00";
+    document.getElementById('cfg-time-2').value = localStorage.getItem('cfg_time_2') || "12:00";
+    document.getElementById('cfg-time-3').value = localStorage.getItem('cfg_time_3') || "18:00";
+  }
+
+  function saveSettings() {
+    localStorage.setItem('cfg_ubidots_token', document.getElementById('cfg-ubidots-token').value);
+    localStorage.setItem('cfg_temp_alert', document.getElementById('cfg-temp-alert').value);
+    localStorage.setItem('cfg_bat_alert', document.getElementById('cfg-bat-alert').value);
+    localStorage.setItem('cfg_line_webhook', document.getElementById('cfg-line-webhook').value);
+    localStorage.setItem('cfg_time_1', document.getElementById('cfg-time-1').value);
+    localStorage.setItem('cfg_time_2', document.getElementById('cfg-time-2').value);
+    localStorage.setItem('cfg_time_3', document.getElementById('cfg-time-3').value);
+    writeLog("設定保存完了");
+    alert('設定を保存しました！');
+  }
+
+  async function runAiAnalysis() {
+    await fetchAllUbidotsData();
+    alert("最新のデータを反映しました！");
+  }
+
+  function buildCuteLineMessage() {
+    return `📦【保冷BOX 定期レポート】✨\n\n` +
+           `現在の状態をお知らせします🤖\n\n` +
+           `🌡️ BOX内温度：${currentTemp} ℃\n` +
+           `🔋 バッテリー：${currentBatPercent} %\n\n` +
+           `引き続き監視を継続します📷✨`;
+  }
+
+  async function sendLineMessage(msg) {
+    const webhookUrl = document.getElementById('cfg-line-webhook').value.trim();
+    if (!webhookUrl) return;
+
+    try {
+      await fetch(webhookUrl, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain" },
+        body: JSON.stringify({ message: msg })
+      });
+      writeLog("🚀 LINEにメッセージを送信しました。");
+    } catch (err) {
+      writeLog("❌ 通信失敗: " + err);
+    }
+  }
+
+  function testLineNotification() {
+    sendLineMessage(buildCuteLineMessage());
+  }
+
+  function checkScheduledNotification() {
+    const now = new Date();
+    const currentHHMM = now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+    if (currentHHMM === lastNotifiedMinute) return;
+
+    const t1 = document.getElementById('cfg-time-1').value;
+    const t2 = document.getElementById('cfg-time-2').value;
+    const t3 = document.getElementById('cfg-time-3').value;
+
+    if (currentHHMM === t1 || currentHHMM === t2 || currentHHMM === t3) {
+      lastNotifiedMinute = currentHHMM;
+      sendLineMessage(buildCuteLineMessage());
+    }
+  }
+
+  loadSettings();
+  fetchAllUbidotsData();
+  writeLog("ダッシュボード（スマホ最適化・レイアウト完成版）初期化完了");
+  setInterval(fetchAllUbidotsData, 30000);
+  setInterval(checkScheduledNotification, 10000);
+</script>
+</body>
+</html>
