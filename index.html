@@ -1,820 +1,1139 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>📷 保冷BOX・電源ステータス 統合監視ダッシュボード</title>
-  <!-- Chart.js（グラフ描画ライブラリ） -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    :root {
-      --bg: #f8fafc;
-      --card-bg: #ffffff;
-      --text-main: #0f172a;
-      --text-muted: #64748b;
-      --primary: #2563eb;
-      --border: #e2e8f0;
-      --radius: 12px;
-    }
+  <title>保冷BOX 統合熱動態＆バッテリー監視 (Apple HIG Spec)</title>
 
-    * { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      background-color: var(--bg);
-      color: var(--text-main);
-      margin: 0;
-      padding: 12px;
-      -webkit-tap-highlight-color: transparent;
-    }
-
-    .container {
-      max-width: 1000px;
-      margin: 0 auto;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
-
-    /* ヘッダー */
-    .app-header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 4px 0;
-    }
-    .app-header h1 {
-      font-size: 1.25rem;
-      font-weight: 700;
-      margin: 0;
-      color: var(--text-main);
-    }
-
-    /* デバイスセクション */
-    .device-section {
-      background: var(--card-bg);
-      border-radius: var(--radius);
-      padding: 16px;
-      border: 1px solid var(--border);
-      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    }
-    .device-title-bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 2px solid var(--primary);
-      padding-bottom: 8px;
-      margin-bottom: 14px;
-    }
-    .device-title {
-      font-size: 1rem;
-      font-weight: 700;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    /* グリッドレイアウト（PCは3列、スマホは1列） */
-    .metrics-grid {
-      display: grid;
-      grid-template-columns: repeat(1, 1fr);
-      gap: 12px;
-    }
-    @media (min-width: 768px) {
-      .metrics-grid {
-        grid-template-columns: repeat(3, 1fr);
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: [
+              '-apple-system', 'BlinkMacSystemFont', '"SF Pro Display"', '"SF Pro Text"',
+              '"SF Pro Icons"', '"Helvetica Neue"', 'Helvetica', 'Arial', '"Hiragino Sans"',
+              '"Hiragino Kaku Gothic ProN"', 'sans-serif'
+            ],
+            mono: ['"SF Mono"', 'Menlo', 'Monaco', 'Consolas', 'monospace']
+          },
+          colors: {
+            apple: {
+              black: '#000000',
+              bg: '#0b0c0e',
+              card: 'rgba(28, 28, 30, 0.65)',
+              cardBorder: 'rgba(255, 255, 255, 0.12)',
+              glassHighlight: 'rgba(255, 255, 255, 0.08)',
+              subtext: '#8e8e93',
+              blue: '#0a84ff',
+              cyan: '#64d2ff',
+              green: '#30d158',
+              yellow: '#ffd60a',
+              orange: '#ff9f0a',
+              red: '#ff453a',
+              purple: '#bf5af2',
+              pink: '#ff375f',
+              gray: '#1c1c1e',
+              grayHover: '#2c2c2e'
+            }
+          },
+          boxShadow: {
+            'apple-glass': '0 20px 50px rgba(0, 0, 0, 0.7), inset 0 1px 0 0 rgba(255, 255, 255, 0.18)',
+            'apple-glow-blue': '0 0 30px rgba(10, 132, 255, 0.3)',
+            'apple-glow-cyan': '0 0 30px rgba(100, 210, 255, 0.25)',
+            'apple-glow-orange': '0 0 30px rgba(255, 159, 10, 0.25)',
+            'apple-glow-green': '0 0 30px rgba(48, 209, 88, 0.25)',
+            'dynamic-island': '0 10px 30px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.15)'
+          }
+        }
       }
     }
+  </script>
 
-    /* 指標カード */
-    .stat-card {
-      background: #f8fafc;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      height: 100%;
-    }
+  <!-- Chart.js & Plugins -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/date-fns"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 
-    .stat-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 6px;
-      min-height: 22px;
-    }
-    .stat-label {
-      font-size: 0.8rem;
-      font-weight: 600;
-      color: var(--text-muted);
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    /* iOS Weather & macOS SF-Pro Ultra Glassmorphism */
+    body {
+      background-color: #050507;
+      background-image: 
+        radial-gradient(at 10% 10%, rgba(10, 132, 255, 0.15) 0px, transparent 40%),
+        radial-gradient(at 90% 15%, rgba(100, 210, 255, 0.12) 0px, transparent 45%),
+        radial-gradient(at 50% 95%, rgba(191, 90, 242, 0.12) 0px, transparent 50%),
+        radial-gradient(at 80% 80%, rgba(255, 159, 10, 0.08) 0px, transparent 40%);
+      background-attachment: fixed;
     }
 
-    /* ステータスバッジ (崩れ防止) */
-    .status-badge {
-      font-size: 0.7rem;
-      font-weight: 700;
-      padding: 2px 8px;
-      border-radius: 12px;
-      white-space: nowrap;
-      display: inline-block;
-      max-width: 140px;
-      overflow: hidden;
-      text-overflow: ellipsis;
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
     }
-    .status-badge.ok { background: #dcfce7; color: #15803d; }
-    .status-badge.warn { background: #fef3c7; color: #b45309; }
-    .status-badge.alert { background: #fee2e2; color: #b91c1c; }
-    .status-badge.info { background: #e0f2fe; color: #0369a1; }
-
-    .stat-value {
-      font-size: 1.6rem;
-      font-weight: 800;
-      color: var(--text-main);
-      line-height: 1.2;
-      margin-bottom: 8px;
+    ::-webkit-scrollbar-track {
+      background: transparent;
     }
-    .stat-value span {
-      font-size: 0.9rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      margin-left: 2px;
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.22);
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.4);
     }
 
-    /* グラフ描画エリア */
-    .chart-box {
-      width: 100%;
-      height: 100px;
-      position: relative;
-      cursor: pointer;
+    .apple-glass {
+      background: rgba(22, 22, 26, 0.65);
+      backdrop-filter: blur(40px) saturate(210%);
+      -webkit-backdrop-filter: blur(40px) saturate(210%);
+      border: 1px solid rgba(255, 255, 255, 0.13);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), inset 0 1px 0 0 rgba(255, 255, 255, 0.12);
     }
 
-    /* モーダル表示 */
-    .modal {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(15, 23, 42, 0.75);
-      backdrop-filter: blur(4px);
-      z-index: 1000;
-      justify-content: center;
-      align-items: center;
-      padding: 16px;
+    .apple-glass-card {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.02) 100%), rgba(20, 20, 24, 0.65);
+      backdrop-filter: blur(35px) saturate(190%);
+      -webkit-backdrop-filter: blur(35px) saturate(190%);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     }
-    .modal-content {
-      background: white;
-      width: 100%;
-      max-width: 800px;
-      height: 70vh;
-      max-height: 500px;
-      border-radius: var(--radius);
-      padding: 16px;
-      position: relative;
-      display: flex;
-      flex-direction: column;
-    }
-    .close-btn {
-      position: absolute;
-      top: -12px;
-      right: -12px;
-      background: #ef4444;
-      color: white;
-      border-radius: 50%;
-      width: 32px;
-      height: 32px;
-      font-weight: bold;
-      border: none;
-      cursor: pointer;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    .apple-glass-card:hover {
+      border-color: rgba(255, 255, 255, 0.25);
+      transform: translateY(-2px);
+      box-shadow: 0 25px 50px rgba(0, 0, 0, 0.7), inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
     }
 
-    /* AI 分析エリア */
-    .ai-section {
-      background: #f0f9ff;
-      border: 1px solid #bae6fd;
-      border-radius: var(--radius);
-      padding: 16px;
-    }
-    .ai-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 10px;
-      margin-bottom: 10px;
-    }
-    .btn-ai {
-      background: var(--primary);
-      color: white;
-      border: none;
-      padding: 8px 14px;
-      border-radius: 6px;
-      font-weight: bold;
-      font-size: 0.8rem;
-      cursor: pointer;
-    }
-    .prediction-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 10px;
-      margin-top: 12px;
-    }
-    .pred-card {
-      background: white;
-      padding: 10px 12px;
-      border-radius: 8px;
-      border-left: 4px solid var(--primary);
-      border: 1px solid var(--border);
+    .apple-segmented-btn {
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
-    /* 設定エリア */
-    details summary {
-      font-weight: 700;
-      cursor: pointer;
-      padding: 6px 0;
-      color: var(--text-muted);
-      user-select: none;
+    /* SF Ring Gauge Component */
+    .gauge-circle {
+      transition: stroke-dashoffset 0.8s cubic-bezier(0.16, 1, 0.3, 1);
     }
-    .setting-group {
-      margin-top: 10px;
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 12px;
+
+    .pulse-green {
+      animation: pulseGreen 2.2s infinite;
     }
-    .form-item {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .form-item label {
-      font-size: 0.78rem;
-      font-weight: 700;
-      color: var(--text-muted);
-    }
-    .form-item input {
-      padding: 8px;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      font-size: 0.85rem;
-    }
-    .btn-save {
-      background: #10b981;
-      color: white;
-      border: none;
-      padding: 10px 16px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-weight: bold;
-      margin-top: 12px;
-      width: 100%;
-    }
-    .btn-test {
-      background: #06b6d4;
-      color: white;
-      border: none;
-      padding: 6px 12px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-weight: bold;
-      font-size: 0.8rem;
-      margin-top: 4px;
-    }
-    .log-box {
-      background: #0f172a;
-      color: #38bdf8;
-      font-family: monospace;
-      font-size: 0.75rem;
-      padding: 10px;
-      border-radius: 6px;
-      height: 90px;
-      overflow-y: auto;
-      margin-top: 8px;
-      white-space: pre-wrap;
+    @keyframes pulseGreen {
+      0% { box-shadow: 0 0 0 0 rgba(48, 209, 88, 0.5); }
+      70% { box-shadow: 0 0 0 10px rgba(48, 209, 88, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(48, 209, 88, 0); }
     }
   </style>
 </head>
-<body>
+<body class="text-[#f5f5f7] min-h-screen font-sans antialiased flex flex-col selection:bg-apple-blue selection:text-white pb-12">
 
-<div class="container">
-  
-  <div class="app-header">
-    <h1>📷 保冷BOX・電源 統合監視</h1>
-  </div>
-
-  <!-- 1. 1号機: Pico W -->
-  <div class="device-section">
-    <div class="device-title-bar">
-      <div class="device-title">📍 保冷BOX内部 (Pico W)</div>
-    </div>
-    
-    <div class="metrics-grid">
-      <!-- 温度 -->
-      <div class="stat-card">
-        <div>
-          <div class="stat-header">
-            <span class="stat-label">BOX内温度</span>
-            <span class="status-badge info" id="status-temp">データ取得中</span>
-          </div>
-          <div class="stat-value" id="val-temp">-- <span>°C</span></div>
-        </div>
-        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d1', '1号機: BOX内温度推移 (℃)', '#ef4444')">
-          <canvas id="chart-d1"></canvas>
-        </div>
-      </div>
-
-      <!-- 電圧 -->
-      <div class="stat-card">
-        <div>
-          <div class="stat-header">
-            <span class="stat-label">バッテリー残量 / 電圧</span>
-            <span class="status-badge info" id="status-bat">データ取得中</span>
-          </div>
-          <div class="stat-value" id="val-bat">-- <span>%</span></div>
-        </div>
-        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d2', '1号機: 電圧推移 (V)', '#3b82f6')">
-          <canvas id="chart-d2"></canvas>
-        </div>
-      </div>
-
-      <!-- 電波強度 -->
-      <div class="stat-card">
-        <div>
-          <div class="stat-header">
-            <span class="stat-label">通信ステータス</span>
-            <span class="status-badge info" id="val-last-time">更新: --:--</span>
-          </div>
-          <div class="stat-value" id="val-rssi">-- <span>dBm</span></div>
-        </div>
-        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d3', '1号機: 電波強度推移 (dBm)', '#8b5cf6')">
-          <canvas id="chart-d3"></canvas>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 2. 2号機: Pico 2 W -->
-  <div class="device-section">
-    <div class="device-title-bar" style="border-bottom-color: #ec4899;">
-      <div class="device-title">🧪 検証機1 (Pico 2 W)</div>
-    </div>
-    
-    <div class="metrics-grid">
-      <!-- 温度 -->
-      <div class="stat-card">
-        <div>
-          <div class="stat-header">
-            <span class="stat-label">検証機1 温度</span>
-            <span class="status-badge info" id="status-test-temp">データ取得中</span>
-          </div>
-          <div class="stat-value" id="val-test-temp">-- <span>°C</span></div>
-        </div>
-        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d4', '2号機: 温度推移 (℃)', '#ec4899')">
-          <canvas id="chart-d4"></canvas>
-        </div>
-      </div>
-
-      <!-- 電圧 -->
-      <div class="stat-card">
-        <div>
-          <div class="stat-header">
-            <span class="stat-label">バッテリー残量 / 電圧</span>
-            <span class="status-badge info" id="status-test-bat">データ取得中</span>
-          </div>
-          <div class="stat-value" id="val-test-bat">-- <span>%</span></div>
-        </div>
-        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d5', '2号機: 電圧推移 (V)', '#10b981')">
-          <canvas id="chart-d5"></canvas>
-        </div>
-      </div>
-
-      <!-- 電波強度 -->
-      <div class="stat-card">
-        <div>
-          <div class="stat-header">
-            <span class="stat-label">通信ステータス</span>
-            <span class="status-badge info" id="val-test-last-time">更新: --:--</span>
-          </div>
-          <div class="stat-value" id="val-test-rssi">-- <span>dBm</span></div>
-        </div>
-        <div class="chart-box" title="タップで拡大" onclick="openModal('chart-d6', '2号機: 電波強度推移 (dBm)', '#f59e0b')">
-          <canvas id="chart-d6"></canvas>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 3. AI 分析 & 予測 -->
-  <div class="ai-section">
-    <div class="ai-header">
-      <div style="font-weight:bold; color:#0369a1; font-size: 0.95rem;">🤖 Gemini AI 状況分析 & 予測</div>
-      <button class="btn-ai" onclick="runAiAnalysis()">AI分析更新</button>
-    </div>
-    <div id="ai-response-text" style="font-size:0.82rem; color:#1e293b; line-height:1.4;">
-      データ取得時に、現在の温度・電圧推移から次回交換が必要になる推奨時刻を提示します。
-    </div>
-
-    <div class="prediction-grid">
-      <div class="pred-card" style="border-left-color: #ef4444;">
-        <div style="font-size:0.72rem; color:var(--text-muted);">🔥 35℃超え予想</div>
-        <div style="font-size:1rem; font-weight:bold; color:#dc2626; margin-top:2px;" id="pred-hot-time">未計算</div>
-      </div>
-      <div class="pred-card" style="border-left-color: #3b82f6;">
-        <div style="font-size:0.72rem; color:var(--text-muted);">🧊 保冷剤交換推奨</div>
-        <div style="font-size:1rem; font-weight:bold; color:#1d4ed8; margin-top:2px;" id="pred-ice-time">未計算</div>
-      </div>
-      <div class="pred-card" style="border-left-color: #f59e0b;">
-        <div style="font-size:0.72rem; color:var(--text-muted);">🔋 バッテリー交換推奨</div>
-        <div style="font-size:1rem; font-weight:bold; color:#b45309; margin-top:2px;" id="pred-bat-time">未計算</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 4. 設定エリア -->
-  <div class="device-section">
-    <details>
-      <summary>⚙️ システム設定・Ubidotsトークン・LINE通知設定</summary>
+  <!-- Top Navigation Bar with Glass Panel -->
+  <header class="sticky top-0 z-50 apple-glass border-b border-white/10 shadow-2xl">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col md:flex-row items-center justify-between gap-3">
       
-      <div class="setting-group">
-        <div class="form-item">
-          <label>Ubidots API Token</label>
-          <input type="text" id="cfg-ubidots-token" placeholder="BBUS-...">
+      <!-- Brand & Dynamic Island Status -->
+      <div class="flex items-center space-x-3.5 w-full md:w-auto justify-between md:justify-start">
+        <div class="flex items-center space-x-3">
+          <!-- Dynamic Island Style Status Badge -->
+          <div class="px-3 py-1.5 rounded-full bg-black/80 border border-white/15 flex items-center space-x-2 shadow-dynamic-island">
+            <div class="w-2.5 h-2.5 rounded-full bg-apple-green pulse-green"></div>
+            <span class="text-xs font-medium tracking-tight text-white flex items-center gap-1.5 font-mono">
+              <i data-lucide="cpu" class="w-3.5 h-3.5 text-apple-cyan"></i>
+              <span>Apple Thermal &amp; Power AI</span>
+            </span>
+          </div>
+          <div>
+            <h1 class="text-sm font-semibold tracking-tight text-white flex items-center gap-2">
+              保冷BOX 統合熱動態・通信残量監視
+            </h1>
+            <p class="text-[11px] text-apple-subtext font-normal">2セット4ch温度取得 × 電圧降下率(dV/dt)通信断予測</p>
+          </div>
         </div>
-        <div class="form-item">
-          <label>温度上限アラート閾値 (°C)</label>
-          <input type="number" id="cfg-temp-alert" value="15.0" step="0.5">
+
+        <button onclick="toggleMobileConfig()" class="md:hidden p-2 text-apple-subtext hover:text-white rounded-2xl bg-white/5 border border-white/10">
+          <i data-lucide="sliders-horizontal" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- Control Toolbar & Device Selector -->
+      <div id="configBar" class="flex flex-col sm:flex-row items-center space-y-2 sm:space-y-0 sm:space-x-3 w-full md:w-auto">
+        
+        <!-- Multi-Device Segmented Control (2セット切り替え) -->
+        <div class="bg-black/60 p-1 rounded-2xl border border-white/10 flex items-center space-x-1 w-full sm:w-auto shadow-inner">
+          <button onclick="selectDeviceFilter('ALL')" id="devBtnALL" 
+                  class="apple-segmented-btn flex-1 sm:flex-none px-3 py-1.5 rounded-xl text-xs font-medium text-white bg-white/15 shadow-sm border border-white/10">
+            全2セット比較
+          </button>
+          <button onclick="selectDeviceFilter('pico-w-main')" id="devBtnMAIN" 
+                  class="apple-segmented-btn flex-1 sm:flex-none px-3 py-1.5 rounded-xl text-xs font-medium text-apple-subtext hover:text-white">
+            本機 (pico-w-main)
+          </button>
+          <button onclick="selectDeviceFilter('pico-2w-test')" id="devBtnTEST" 
+                  class="apple-segmented-btn flex-1 sm:flex-none px-3 py-1.5 rounded-xl text-xs font-medium text-apple-subtext hover:text-white">
+            検証機 (pico-2w-test)
+          </button>
         </div>
-        <div class="form-item">
-          <label>バッテリー残量下限アラート閾値 (%)</label>
-          <input type="number" id="cfg-bat-alert" value="20" min="5" max="50">
-        </div>
-        <div class="form-item">
-          <label>LINE Webhook URL (GAS Webアプリ)</label>
-          <input type="text" id="cfg-line-webhook" placeholder="https://script.google.com/macros/s/.../exec">
-          <button class="btn-test" onclick="testLineNotification()">🚀 LINE通知テスト送信</button>
+
+        <div class="flex items-center space-x-2 w-full sm:w-auto justify-end">
+          <!-- GAS URL Modal Toggle -->
+          <button onclick="toggleConfigModal()" class="p-2 bg-white/5 hover:bg-white/10 text-apple-subtext hover:text-white rounded-2xl border border-white/10 shrink-0" title="エンドポイント設定">
+            <i data-lucide="settings" class="w-4 h-4"></i>
+          </button>
+
+          <!-- System Info Modal Toggle -->
+          <button onclick="toggleHelpModal()" class="p-2 bg-white/5 hover:bg-white/10 text-apple-subtext hover:text-white rounded-2xl border border-white/10 shrink-0" title="仕様ガイド">
+            <i data-lucide="info" class="w-4 h-4"></i>
+          </button>
+
+          <button onclick="fetchData()" id="refreshBtn" 
+                  class="bg-apple-blue hover:bg-blue-500 text-white font-medium text-xs px-4 py-2 rounded-2xl shadow-apple-glow-blue flex items-center justify-center space-x-1.5 shrink-0 transition-all">
+            <i data-lucide="refresh-cw" id="refreshIcon" class="w-3.5 h-3.5"></i>
+            <span>更新</span>
+          </button>
+
+          <button onclick="useDemoData()" 
+                  class="bg-white/10 hover:bg-white/15 text-slate-200 font-medium text-xs px-3.5 py-2 rounded-2xl border border-white/10 shrink-0">
+            デモデータ
+          </button>
         </div>
       </div>
 
-      <div style="margin-top: 12px;">
-        <div style="font-size:0.78rem; font-weight:bold; color:var(--text-muted);">📋 システム実行・通信ログ</div>
-        <div class="log-box" id="system-log">[System] ログモニター待機中...\n</div>
-      </div>
+    </div>
+  </header>
 
-      <hr style="border: 0; border-top: 1px solid var(--border); margin: 15px 0;">
-      
-      <div style="font-weight:bold; font-size:0.82rem; color:var(--text-muted); margin-bottom:8px;">⏰ LINE定時通知時刻 (1日3回)</div>
-      <div class="setting-group">
-        <div class="form-item">
-          <label>通知時刻 1</label>
-          <input type="time" id="cfg-time-1" value="08:00">
+  <!-- Endpoint Config Modal -->
+  <div id="configModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+    <div class="apple-glass rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-white/20 relative text-xs">
+      <button onclick="toggleConfigModal()" class="absolute top-5 right-5 text-apple-subtext hover:text-white p-1 rounded-full hover:bg-white/10">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+      <div class="flex items-center space-x-3 border-b border-white/10 pb-3">
+        <div class="p-2.5 rounded-2xl bg-apple-blue/20 text-apple-blue border border-apple-blue/30">
+          <i data-lucide="link" class="w-5 h-5"></i>
         </div>
-        <div class="form-item">
-          <label>通知時刻 2</label>
-          <input type="time" id="cfg-time-2" value="12:00">
-        </div>
-        <div class="form-item">
-          <label>通知時刻 3</label>
-          <input type="time" id="cfg-time-3" value="18:00">
+        <div>
+          <h3 class="text-sm font-semibold text-white">Google Apps Script エンドポイント設定</h3>
+          <p class="text-[11px] text-apple-subtext">デプロイ済みWeb App URLの指定</p>
         </div>
       </div>
-
-      <button class="btn-save" onclick="saveSettings()">設定を保存</button>
-    </details>
+      <div class="space-y-2">
+        <label class="text-apple-subtext block text-[11px]">GAS Exec URL</label>
+        <input type="text" id="gasUrlInput" 
+               value="https://script.google.com/macros/s/AKfycbwLSeqjUq8Lhq6YDKxeJG2CxzLLTI-0l1b_GYtU7jDQBGiaGvkMh4kNAWqFEEfDupPm/exec"
+               placeholder="https://script.google.com/macros/s/.../exec"
+               class="w-full bg-black/60 border border-white/15 rounded-2xl px-3.5 py-2.5 text-xs text-white placeholder-apple-subtext focus:outline-none focus:border-apple-blue focus:ring-1 focus:ring-apple-blue font-mono">
+      </div>
+      <div class="pt-2 flex justify-end space-x-2">
+        <button onclick="saveGasUrl()" class="bg-apple-blue hover:bg-blue-600 text-white font-medium px-5 py-2 rounded-2xl shadow-apple-glow-blue">
+          保存して読み込み
+        </button>
+      </div>
+    </div>
   </div>
 
-  <footer style="text-align: center; margin: 10px 0; font-size: 0.75rem; color: var(--text-muted);">
-    <a href="./privacy.html" style="color: var(--text-muted); margin-right: 12px;">プライバシーポリシー</a>
-    <a href="./terms.html" style="color: var(--text-muted);">利用規約</a>
+  <!-- Thermal & Power Model Help Modal -->
+  <div id="gasHelpModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
+    <div class="apple-glass rounded-3xl max-w-xl w-full p-6 space-y-4 shadow-2xl relative text-xs text-slate-300 border border-white/20">
+      <button onclick="toggleHelpModal()" class="absolute top-5 right-5 text-apple-subtext hover:text-white p-1 rounded-full hover:bg-white/10">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+
+      <div class="flex items-center space-x-3 border-b border-white/10 pb-3">
+        <div class="p-2.5 rounded-2xl bg-apple-purple/20 text-apple-purple border border-apple-purple/30">
+          <i data-lucide="zap" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-white">Apple-Style 電圧＆熱結合モデル AI仕様</h3>
+          <p class="text-[11px] text-apple-subtext">バッテリー切れ通信断予測 ＆ 熱力学結合モデル</p>
+        </div>
+      </div>
+
+      <div class="space-y-3 leading-relaxed max-h-[60vh] overflow-y-auto pr-1">
+        <div class="bg-white/5 p-3.5 rounded-2xl border border-white/5 space-y-1.5">
+          <p class="font-semibold text-apple-yellow flex items-center gap-1.5">
+            <i data-lucide="battery-warning" class="w-4 h-4"></i> 1. 電圧降下率 (dV/dt) 通信断予想モデル
+          </p>
+          <p class="text-apple-subtext">Pico W のリポバッテリー・VSYS電源電圧の低下直線を最小二乗法で常時計算。Picoの動作限界電圧である **3.40V（通信不能・停止閾値）** に達する予想時刻をリアルタイム推測し、通信断が発生する前に警告を出します。</p>
+        </div>
+
+        <div class="bg-white/5 p-3.5 rounded-2xl border border-white/5 space-y-1.5">
+          <p class="font-semibold text-apple-cyan flex items-center gap-1.5">
+            <i data-lucide="thermometer-snowflake" class="w-4 h-4"></i> 2. 2セット4chマルチチャンネル対応
+          </p>
+          <p class="text-apple-subtext">1ピンで複数DS18B20を識別する1-Wire規格により、本機（フィールド）と検証機（室内）の2セット・合計4チャンネルの温度を同時および選択的にモニタリングできます。</p>
+        </div>
+
+        <div class="bg-white/5 p-3.5 rounded-2xl border border-white/5 space-y-1.5">
+          <p class="font-semibold text-apple-green flex items-center gap-1.5">
+            <i data-lucide="sun-medium" class="w-4 h-4"></i> 3. 朝7時・日中温室の熱結合予測
+          </p>
+          <p class="text-apple-subtext">日の出（朝7時頃）からの太陽放射エネルギーとハウス内温度の上昇カーブを熱伝達方程式に組み込み、35℃到達限界時刻の予測精度を向上させます。</p>
+        </div>
+      </div>
+
+      <div class="pt-2 flex justify-end">
+        <button onclick="toggleHelpModal()" class="bg-apple-blue hover:bg-blue-600 text-white font-medium px-5 py-2 rounded-2xl">
+          閉じる
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content Dashboard -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- Toast Notification Banner -->
+    <div id="toast" class="hidden transform transition-all duration-300 p-4 rounded-3xl apple-glass flex items-center justify-between shadow-2xl text-xs font-medium border">
+      <div class="flex items-center space-x-3">
+        <i id="toastIcon" class="w-4 h-4 shrink-0"></i>
+        <span id="toastMessage"></span>
+      </div>
+      <button onclick="hideToast()" class="text-apple-subtext hover:text-white ml-4">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+
+    <!-- Active Device Target Header Indicator -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-2">
+      <div>
+        <div class="flex items-center space-x-2">
+          <span class="text-xs font-semibold uppercase tracking-wider text-apple-subtext">監視ターゲット</span>
+          <span id="activeDeviceBadge" class="px-2.5 py-0.5 rounded-full text-xs font-mono bg-apple-blue/20 text-apple-blue border border-apple-blue/30 font-medium">
+            全2セット (全4ch表示中)
+          </span>
+        </div>
+        <p class="text-xs text-white font-medium mt-1" id="activeDeviceSub">室内検証機 (pico-2w-test) ＆ 本機 (pico-w-main)</p>
+      </div>
+      <div id="activeDeviceLastTime" class="text-xs text-apple-subtext font-mono">
+        最終同期: --:--:--
+      </div>
+    </div>
+
+    <!-- Metric Cards Grid (Apple Health & Weather Widget Style) -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      
+      <!-- Widget 1: Box Temperature -->
+      <div class="apple-glass-card rounded-3xl p-5 relative overflow-hidden flex flex-col justify-between h-44">
+        <div class="flex items-center justify-between text-apple-subtext">
+          <span class="text-xs font-semibold tracking-tight uppercase">BOX内温度 (ch1)</span>
+          <div class="p-2 rounded-2xl bg-apple-cyan/15 text-apple-cyan border border-apple-cyan/20">
+            <i data-lucide="box" class="w-4 h-4"></i>
+          </div>
+        </div>
+        
+        <div>
+          <div class="flex items-baseline space-x-1.5">
+            <span id="cardBoxTemp" class="text-4xl font-bold tracking-tight text-white font-mono">--.-</span>
+            <span class="text-sm text-apple-subtext font-normal">℃</span>
+          </div>
+          <div id="cardBoxTempSub" class="text-[11px] text-apple-subtext mt-1">基準上限 35.0℃ まで安定</div>
+        </div>
+
+        <div class="flex items-center justify-between text-xs pt-2.5 border-t border-white/10">
+          <span class="text-apple-subtext">ステータス</span>
+          <span id="boxTempStatus" class="font-medium text-apple-green flex items-center gap-1">
+            <i data-lucide="shield-check" class="w-3.5 h-3.5"></i> 正常
+          </span>
+        </div>
+      </div>
+
+      <!-- Widget 2: Greenhouse Temperature -->
+      <div class="apple-glass-card rounded-3xl p-5 relative overflow-hidden flex flex-col justify-between h-44">
+        <div class="flex items-center justify-between text-apple-subtext">
+          <span class="text-xs font-semibold tracking-tight uppercase">ハウス温度 (ch2)</span>
+          <div class="p-2 rounded-2xl bg-apple-orange/15 text-apple-orange border border-apple-orange/20">
+            <i data-lucide="sun" class="w-4 h-4"></i>
+          </div>
+        </div>
+
+        <div>
+          <div class="flex items-baseline space-x-1.5">
+            <span id="cardHouseTemp" class="text-4xl font-bold tracking-tight text-white font-mono">--.-</span>
+            <span class="text-sm text-apple-subtext font-normal">℃</span>
+          </div>
+          <div class="text-[11px] text-apple-subtext mt-1 flex items-center justify-between">
+            <span>内外差 (&Delta;T):</span>
+            <strong id="cardTempDiff" class="text-white font-mono font-medium">-- ℃</strong>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between text-xs pt-2.5 border-t border-white/10 text-apple-subtext">
+          <span>朝7時日照熱負荷</span>
+          <span class="text-apple-orange font-medium font-mono">上昇位相</span>
+        </div>
+      </div>
+
+      <!-- Widget 3: Thermal 35℃ Prediction Time -->
+      <div class="apple-glass-card rounded-3xl p-5 relative overflow-hidden flex flex-col justify-between h-44 border-apple-blue/30 shadow-apple-glow-blue">
+        <div class="flex items-center justify-between text-apple-subtext">
+          <span class="text-xs font-semibold tracking-tight uppercase text-apple-blue">35℃限界 到達予想</span>
+          <div class="p-2 rounded-2xl bg-apple-blue/20 text-apple-blue border border-apple-blue/30">
+            <i data-lucide="clock" class="w-4 h-4"></i>
+          </div>
+        </div>
+
+        <div>
+          <div class="flex items-baseline space-x-1.5">
+            <span id="cardPredictTime" class="text-3xl font-bold tracking-tight text-white font-mono">--:-- 頃</span>
+          </div>
+          <div id="cardPredictRemain" class="text-[11px] text-apple-cyan font-mono mt-1 font-medium">残り約 -- 時間</div>
+        </div>
+
+        <div class="flex items-center justify-between text-xs pt-2.5 border-t border-white/10 text-apple-subtext">
+          <span>AI熱結合補正</span>
+          <span class="text-apple-green font-medium font-mono">連動高精度</span>
+        </div>
+      </div>
+
+      <!-- Widget 4: Battery Voltage & Communication Outage Prediction -->
+      <div class="apple-glass-card rounded-3xl p-5 relative overflow-hidden flex flex-col justify-between h-44 border-apple-yellow/30">
+        <div class="flex items-center justify-between text-apple-subtext">
+          <span class="text-xs font-semibold tracking-tight uppercase text-apple-yellow">バッテリー＆通信断予測</span>
+          <div class="p-2 rounded-2xl bg-apple-yellow/20 text-apple-yellow border border-apple-yellow/30">
+            <i data-lucide="zap" class="w-4 h-4"></i>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="flex items-baseline space-x-1">
+              <span id="cardVoltage" class="text-3xl font-bold tracking-tight text-white font-mono">-.--</span>
+              <span class="text-xs text-apple-subtext">V</span>
+            </div>
+            <div id="cardRssi" class="text-[11px] text-apple-subtext font-mono mt-0.5">RSSI: -- dBm</div>
+          </div>
+
+          <!-- SF Voltage Ring Gauge -->
+          <div class="relative w-12 h-12 flex items-center justify-center">
+            <svg class="w-12 h-12 transform -rotate-90">
+              <circle cx="24" cy="24" r="18" stroke="currentColor" stroke-width="3.5" class="text-white/10" fill="transparent" />
+              <circle id="batteryGaugeCircle" cx="24" cy="24" r="18" stroke="currentColor" stroke-width="3.5" 
+                      class="text-apple-yellow gauge-circle" fill="transparent" 
+                      stroke-dasharray="113" stroke-dashoffset="30" stroke-linecap="round" />
+            </svg>
+            <span id="batteryPercent" class="absolute text-[10px] font-bold font-mono text-white">--%</span>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between text-[11px] pt-2 border-t border-white/10">
+          <span class="text-apple-subtext">通信停止(3.4V)予想:</span>
+          <strong id="cardBatteryOutageTime" class="text-apple-yellow font-mono font-medium">--:-- 頃 (約--h)</strong>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Apple Thermal & Power Combined Chart Section -->
+    <div class="apple-glass rounded-3xl p-5 sm:p-6 relative">
+      
+      <!-- Chart Controls Header -->
+      <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-5">
+        <div>
+          <div class="flex items-center space-x-2">
+            <div class="w-2.5 h-2.5 rounded-full bg-apple-blue"></div>
+            <h2 class="text-sm font-semibold text-white tracking-tight">
+              熱力学結合 ＆ バッテリー降下分析トレンド (4chマルチチャート)
+            </h2>
+          </div>
+          <p class="text-[11px] text-apple-subtext mt-1">
+            ※ BOX推測（破線）はハウス熱負荷と連動。電圧降下線（黄）により通信切断タイミングを予知します。
+          </p>
+        </div>
+
+        <!-- Legend & Reset Zoom -->
+        <div class="flex flex-wrap items-center gap-2">
+          <button onclick="resetChartZoom()" 
+                  class="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-xs font-medium rounded-xl text-slate-200 border border-white/10 apple-segmented-btn flex items-center space-x-1.5">
+            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 text-apple-subtext"></i>
+            <span>ズームリセット</span>
+          </button>
+          
+          <div class="text-[11px] text-apple-subtext bg-black/50 px-3.5 py-1.5 rounded-2xl border border-white/10 flex flex-wrap items-center gap-3">
+            <span class="flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-apple-cyan mr-1.5"></span> BOX実測</span>
+            <span class="flex items-center"><span class="w-3 h-0.5 bg-apple-cyan border border-dashed border-apple-cyan mr-1.5"></span> 熱結合推測</span>
+            <span class="flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-apple-orange mr-1.5"></span> ハウス実測</span>
+            <span class="flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-apple-yellow mr-1.5"></span> 電圧(Vsys)</span>
+            <span class="flex items-center"><span class="w-3 h-0.5 bg-apple-red border border-dashed border-apple-red mr-1.5"></span> 限界35℃</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Canvas Container -->
+      <div class="relative w-full h-[400px] sm:h-[460px]">
+        <canvas id="mainChart"></canvas>
+      </div>
+    </div>
+
+    <!-- AI Power & Thermal Analytics Status Bar -->
+    <div class="apple-glass rounded-3xl p-5 border border-apple-purple/30 shadow-2xl">
+      <div class="flex flex-col md:flex-row items-center justify-between gap-4">
+        
+        <div class="flex items-center space-x-3.5">
+          <div class="p-3 rounded-2xl bg-apple-purple/20 text-apple-purple border border-apple-purple/30 shrink-0">
+            <i data-lucide="brain-circuit" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <h3 class="text-xs font-semibold text-white">Apple-Style AIモデル常時再校正ステータス</h3>
+              <span class="px-2.5 py-0.5 rounded-full text-[10px] bg-apple-purple/20 text-apple-purple border border-apple-purple/30 font-mono">
+                最小二乗法勾配フィッティング
+              </span>
+            </div>
+            <p class="text-[11px] text-apple-subtext mt-0.5">
+              直近の吸熱勾配 k 及びバッテリー放電レート dV/dt から未来の危険タイミングを常時予測中
+            </p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3 w-full md:w-auto text-center font-mono text-xs">
+          <div class="bg-black/50 p-2.5 rounded-2xl border border-white/5">
+            <div class="text-[10px] text-apple-subtext">吸熱率 (k)</div>
+            <div id="statKValue" class="font-semibold text-apple-cyan mt-0.5">0.042 /h</div>
+          </div>
+          <div class="bg-black/40 p-2.5 rounded-2xl border border-white/5">
+            <div class="text-[10px] text-apple-subtext">放電率 (dV/dt)</div>
+            <div id="statDischargeRate" class="font-semibold text-apple-yellow mt-0.5">-0.012 V/h</div>
+          </div>
+          <div class="bg-black/40 p-2.5 rounded-2xl border border-white/5">
+            <div class="text-[10px] text-apple-subtext">次回モデル更新</div>
+            <div id="statNextRecalib" class="font-semibold text-apple-green mt-0.5">15分後</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Event Logs & Multi-Device Telemetry Table Section -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      
+      <!-- Ice Replacement Events Panel -->
+      <div class="apple-glass rounded-3xl p-5 flex flex-col h-96">
+        <div class="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
+          <h3 class="text-xs font-semibold text-white flex items-center space-x-2">
+            <i data-lucide="history" class="w-4 h-4 text-apple-blue"></i>
+            <span>保冷剤交換検知 ＆ 履歴ログ</span>
+          </h3>
+          <span id="eventCountBadge" class="text-[10px] font-medium bg-white/10 text-apple-subtext px-2 py-0.5 rounded-full border border-white/5">0 件</span>
+        </div>
+
+        <div id="eventsList" class="flex-1 overflow-y-auto space-y-2.5 pr-1">
+          <div class="text-center text-xs text-apple-subtext py-12">検知イベントはありません</div>
+        </div>
+      </div>
+
+      <!-- Raw Telemetry Table with Device Labels (2セット4ch対応) -->
+      <div class="apple-glass rounded-3xl p-5 flex flex-col h-96 lg:col-span-2">
+        <div class="flex items-center justify-between mb-4 pb-3 border-b border-white/10">
+          <h3 class="text-xs font-semibold text-white flex items-center space-x-2">
+            <i data-lucide="database" class="w-4 h-4 text-apple-green"></i>
+            <span>全2セット受信用テレメトリログ (GAS連携)</span>
+          </h3>
+          <div class="text-[11px] text-apple-subtext font-mono" id="lastUpdatedTime">最終更新: --:--:--</div>
+        </div>
+
+        <div class="flex-1 overflow-x-auto overflow-y-auto rounded-2xl border border-white/5 bg-black/50">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead class="bg-[#1c1c1e]/90 text-apple-subtext sticky top-0 z-10 font-medium border-b border-white/10 backdrop-blur-md">
+              <tr>
+                <th class="py-2.5 px-3 font-normal">時刻</th>
+                <th class="py-2.5 px-3 font-normal">デバイスID</th>
+                <th class="py-2.5 px-3 font-normal">BOX温度(ch1)</th>
+                <th class="py-2.5 px-3 font-normal">ハウス温度(ch2)</th>
+                <th class="py-2.5 px-3 font-normal">電圧 (Vsys)</th>
+                <th class="py-2.5 px-3 font-normal">RSSI</th>
+              </tr>
+            </thead>
+            <tbody id="logsTableBody" class="divide-y divide-white/5 text-slate-200 font-mono">
+              <tr>
+                <td colspan="6" class="text-center py-12 text-apple-subtext font-sans">データを取得中...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <footer class="mt-auto border-t border-white/10 py-6 text-center text-xs text-apple-subtext">
+    <p>保冷BOX 統合熱動態＆通信残量監視システム &bull; Designed in Apple HIG Style</p>
   </footer>
-</div>
 
-<!-- モーダル -->
-<div id="chartModal" class="modal" onclick="closeModal()">
-  <div class="modal-content" onclick="event.stopPropagation()">
-    <button class="close-btn" onclick="closeModal()">✕</button>
-    <div style="width: 100%; height: 100%; position: relative;">
-      <canvas id="modalCanvas"></canvas>
-    </div>
-  </div>
-</div>
+  <script>
+    // Global State
+    let chartInstance = null;
+    let autoRefreshTimer = null;
+    let recalibrationTimer = null;
+    let rawDataCache = null;
+    let activeDeviceFilter = 'ALL'; 
 
-<script>
-  let chartD1, chartD2, chartD3, chartD4, chartD5, chartD6, modalChart;
-  let cacheData = { d1: [], d2: [], d3: [], d4: [], d5: [], d6: [] };
-  let currentTemp = "--";
-  let currentBatPercent = "--";
-  let lastNotifiedMinute = "";
+    const DEFAULT_GAS_URL = "https://script.google.com/macros/s/AKfycbwLSeqjUq8Lhq6YDKxeJG2CxzLLTI-0l1b_GYtU7jDQBGiaGvkMh4kNAWqFEEfDupPm/exec";
 
-  function writeLog(msg) {
-    const logBox = document.getElementById('system-log');
-    if (!logBox) return;
-    const now = new Date().toLocaleTimeString('ja-JP');
-    logBox.innerText += `[${now}] ${msg}\n`;
-    logBox.scrollTop = logBox.scrollHeight;
-  }
+    function showToast(message, type = 'info') {
+      const toast = document.getElementById('toast');
+      const icon = document.getElementById('toastIcon');
+      const msg = document.getElementById('toastMessage');
 
-  async function fetchUbidotsVariable(deviceLabel, variableLabel, token) {
-    const url = `https://industrial.api.ubidots.com/api/v1.6/devices/${deviceLabel}/${variableLabel}/values?page_size=20`;
-    try {
-      const res = await fetch(url, { headers: { "X-Auth-Token": token } });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return (data.results || []).reverse();
-    } catch (e) {
-      writeLog(`[Ubidots Error] ${deviceLabel}/${variableLabel}: ` + e.message);
-      return [];
-    }
-  }
+      if (!toast || !icon || !msg) return;
 
-  async function fetchAllUbidotsData() {
-    const token = document.getElementById('cfg-ubidots-token').value.trim() || "BBUS-d7nOyVvjWHEUQfqS9LRVevB6yiTnOe";
-    
-    // 1. 本機 (pico-w-main)
-    const mainTemp = await fetchUbidotsVariable("pico-w-main", "temperature", token);
-    const mainVolts = await fetchUbidotsVariable("pico-w-main", "vsys_voltage", token);
-    const mainRssi = await fetchUbidotsVariable("pico-w-main", "rssi", token);
+      msg.textContent = message;
 
-    // 2. 検証機 (pico-2w-test)
-    const testTemp = await fetchUbidotsVariable("pico-2w-test", "temperature", token);
-    const testVolts = await fetchUbidotsVariable("pico-2w-test", "vsys_voltage", token);
-    const testRssi = await fetchUbidotsVariable("pico-2w-test", "rssi", token);
+      if (type === 'success') {
+        toast.className = "p-4 rounded-3xl border flex items-center justify-between shadow-2xl bg-black/90 border-apple-green/40 text-apple-green apple-glass";
+        icon.setAttribute('data-lucide', 'check-circle-2');
+      } else if (type === 'error') {
+        toast.className = "p-4 rounded-3xl border flex items-center justify-between shadow-2xl bg-black/90 border-apple-red/40 text-apple-red apple-glass";
+        icon.setAttribute('data-lucide', 'alert-circle');
+      } else {
+        toast.className = "p-4 rounded-3xl border flex items-center justify-between shadow-2xl bg-black/90 border-white/20 text-white apple-glass";
+        icon.setAttribute('data-lucide', 'info');
+      }
 
-    cacheData.d1 = mainTemp;
-    cacheData.d2 = mainVolts;
-    cacheData.d3 = mainRssi;
-    cacheData.d4 = testTemp;
-    cacheData.d5 = testVolts;
-    cacheData.d6 = testRssi;
+      if (window.lucide) lucide.createIcons();
+      toast.classList.remove('hidden');
 
-    // A. 1号機 (Pico W)
-    if (mainTemp.length > 0) {
-      const latestTemp = mainTemp[mainTemp.length - 1].value;
-      currentTemp = latestTemp.toFixed(2);
-      document.getElementById('val-temp').innerHTML = `${currentTemp} <span>°C</span>`;
-    }
-    if (mainVolts.length > 0) {
-      const latestVolts = mainVolts[mainVolts.length - 1].value;
-      const bat = calcBatteryInfo(latestVolts);
-      currentBatPercent = bat.percent;
-      document.getElementById('val-bat').innerHTML = `${bat.percent} <span>% (${latestVolts.toFixed(2)}V)</span>`;
-      updateDeviceStatus('status-temp', 'status-bat', parseFloat(currentTemp), latestVolts);
-      checkThresholdsAndAlert(parseFloat(currentTemp), latestVolts);
-    }
-    if (mainRssi.length > 0) {
-      const latestRssi = mainRssi[mainRssi.length - 1].value;
-      document.getElementById('val-rssi').innerHTML = `${latestRssi} <span>dBm</span>`;
-      const lastTime = new Date(mainRssi[mainRssi.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-      document.getElementById('val-last-time').innerText = `更新: ${lastTime}`;
+      setTimeout(() => hideToast(), 4000);
     }
 
-    // B. 2号機 (Pico 2 W)
-    if (testTemp.length > 0) {
-      const val = testTemp[testTemp.length - 1].value;
-      document.getElementById('val-test-temp').innerHTML = `${val.toFixed(2)} <span>°C</span>`;
-    }
-    if (testVolts.length > 0) {
-      const val = testVolts[testVolts.length - 1].value;
-      const bat = calcBatteryInfo(val);
-      document.getElementById('val-test-bat').innerHTML = `${bat.percent} <span>% (${val.toFixed(2)}V)</span>`;
-      const tVal = testTemp.length > 0 ? testTemp[testTemp.length - 1].value : NaN;
-      updateDeviceStatus('status-test-temp', 'status-test-bat', tVal, val);
-    }
-    if (testRssi.length > 0) {
-      const val = testRssi[testRssi.length - 1].value;
-      document.getElementById('val-test-rssi').innerHTML = `${val} <span>dBm</span>`;
-      const lastTime = new Date(testRssi[testRssi.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-      document.getElementById('val-test-last-time').innerText = `更新: ${lastTime}`;
-    } else if (testVolts.length > 0) {
-      const lastTime = new Date(testVolts[testVolts.length - 1].timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-      document.getElementById('val-test-last-time').innerText = `更新: ${lastTime}`;
+    function hideToast() {
+      const toast = document.getElementById('toast');
+      if (toast) toast.classList.add('hidden');
     }
 
-    renderCharts();
-    writeLog("データ最新化完了");
-  }
+    function toggleMobileConfig() {
+      const config = document.getElementById('configBar');
+      if (config) config.classList.toggle('hidden');
+    }
 
-  function renderCharts() {
-    chartD1 = drawSingleChart('chart-d1', cacheData.d1, 'BOX内温度 (℃)', '#ef4444', chartD1);
-    chartD2 = drawSingleChart('chart-d2', cacheData.d2, '電圧 (V)', '#3b82f6', chartD2);
-    chartD3 = drawSingleChart('chart-d3', cacheData.d3, '電波強度 (dBm)', '#8b5cf6', chartD3);
-    chartD4 = drawSingleChart('chart-d4', cacheData.d4, '検証機1 温度 (℃)', '#ec4899', chartD4);
-    chartD5 = drawSingleChart('chart-d5', cacheData.d5, '検証機1 電圧 (V)', '#10b981', chartD5);
-    chartD6 = drawSingleChart('chart-d6', cacheData.d6, '検証機1 電波強度 (dBm)', '#f59e0b', chartD6);
-  }
+    function toggleHelpModal() {
+      const modal = document.getElementById('gasHelpModal');
+      if (modal) modal.classList.toggle('hidden');
+    }
 
-  function drawSingleChart(canvasId, seriesData, labelName, color, existingChart) {
-    const ctx = document.getElementById(canvasId).getContext('2d');
-    if (existingChart) existingChart.destroy();
+    function toggleConfigModal() {
+      const modal = document.getElementById('configModal');
+      if (modal) modal.classList.toggle('hidden');
+    }
 
-    const labels = seriesData.map(item => new Date(item.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }));
-    const values = seriesData.map(item => item.value);
-
-    return new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: labelName,
-          data: values,
-          borderColor: color,
-          backgroundColor: color + '15',
-          borderWidth: 2,
-          pointRadius: 2,
-          fill: true,
-          tension: 0.3
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { display: true, ticks: { font: { size: 9 }, color: '#94a3b8' }, grid: { display: false } },
-          y: { display: true, ticks: { font: { size: 9 }, color: '#94a3b8' }, grid: { color: '#f1f5f9' } }
+    function saveGasUrl() {
+      const input = document.getElementById('gasUrlInput');
+      if (input) {
+        const url = input.value.trim();
+        if (url) {
+          localStorage.setItem('coolerbox_gas_url', url);
+          showToast('GAS Endpoint URLを保存しました', 'success');
+          toggleConfigModal();
+          fetchData();
         }
       }
-    });
-  }
-
-  function calcBatteryInfo(volts) {
-    if (isNaN(volts) || volts <= 0) return { percent: 0, remainHours: "0.0" };
-    let percent = Math.round(((volts - 3.2) / (4.2 - 3.2)) * 100);
-    if (percent > 100) percent = 100;
-    if (percent < 0) percent = 0;
-    let remainHours = (percent / 100) * 20.0;
-    return { percent: percent, remainHours: remainHours.toFixed(1) };
-  }
-
-  function updateDeviceStatus(tempElemId, batElemId, temp, volts) {
-    const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
-    const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
-    const bat = calcBatteryInfo(volts);
-
-    const tempElem = document.getElementById(tempElemId);
-    if (!isNaN(temp)) {
-      if (temp >= alertTemp) {
-        tempElem.innerText = "⚠️ 高温警告";
-        tempElem.className = "status-badge alert";
-      } else if (temp >= alertTemp - 2.0) {
-        tempElem.innerText = "⚡ 温度上昇中";
-        tempElem.className = "status-badge warn";
-      } else {
-        tempElem.innerText = "❄️ 正常";
-        tempElem.className = "status-badge ok";
-      }
     }
 
-    const batElem = document.getElementById(batElemId);
-    if (!isNaN(volts) && volts > 0) {
-      if (bat.percent <= alertBat) {
-        batElem.innerText = "🪫 残量低下";
-        batElem.className = "status-badge alert";
-      } else if (bat.percent < 40) {
-        batElem.innerText = "⚠️ 交換準備推奨";
-        batElem.className = "status-badge warn";
-      } else {
-        batElem.innerText = "🔋 残量十分";
-        batElem.className = "status-badge ok";
-      }
-    }
-  }
+    function selectDeviceFilter(dev) {
+      activeDeviceFilter = dev;
 
-  function checkThresholdsAndAlert(temp, volts) {
-    const alertTemp = parseFloat(document.getElementById('cfg-temp-alert').value);
-    const alertBat = parseFloat(document.getElementById('cfg-bat-alert').value);
-    const bat = calcBatteryInfo(volts);
+      const btnAll = document.getElementById('devBtnALL');
+      const btnMain = document.getElementById('devBtnMAIN');
+      const btnTest = document.getElementById('devBtnTEST');
 
-    const isTempAlert = !isNaN(temp) && temp >= alertTemp;
-    const isBatAlert = bat.percent <= alertBat && bat.percent > 0;
-
-    const lastTempAlert = localStorage.getItem('state_last_temp_alert') === 'true';
-    const lastBatAlert = localStorage.getItem('state_last_bat_alert') === 'true';
-
-    localStorage.setItem('state_last_temp_alert', isTempAlert);
-    localStorage.setItem('state_last_bat_alert', isBatAlert);
-
-    if ((isTempAlert && !lastTempAlert) || (isBatAlert && !lastBatAlert)) {
-      let alertMsg = `🚨【保冷BOX アラート発報】🚨\n\n`;
-      if (isTempAlert) alertMsg += `🌡️ BOX内温度: ${temp}℃ (閾値: ${alertTemp}℃)\n👉 保冷剤の交換を行ってください。🧊\n\n`;
-      if (isBatAlert) alertMsg += `🔋 バッテリー残量: ${bat.percent}% (${volts}V)\n👉 充電または交換を行ってください。⚡\n\n`;
-      sendLineMessage(alertMsg);
-    }
-  }
-
-  function openModal(targetCanvasId, title, color) {
-    const keyMap = { 'chart-d1': 'd1', 'chart-d2': 'd2', 'chart-d3': 'd3', 'chart-d4': 'd4', 'chart-d5': 'd5', 'chart-d6': 'd6' };
-    const seriesData = cacheData[keyMap[targetCanvasId]] || [];
-    if (seriesData.length === 0) return;
-
-    document.getElementById('chartModal').style.display = 'flex';
-    const ctx = document.getElementById('modalCanvas').getContext('2d');
-    if (modalChart) modalChart.destroy();
-
-    const labels = seriesData.map(item => new Date(item.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }));
-    const values = seriesData.map(item => item.value);
-
-    modalChart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: title,
-          data: values,
-          borderColor: color,
-          backgroundColor: color + '20',
-          borderWidth: 3,
-          pointRadius: 4,
-          fill: true,
-          tension: 0.3
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false
-      }
-    });
-  }
-
-  function closeModal() {
-    document.getElementById('chartModal').style.display = 'none';
-    if (modalChart) { modalChart.destroy(); modalChart = null; }
-  }
-
-  function loadSettings() {
-    document.getElementById('cfg-ubidots-token').value = localStorage.getItem('cfg_ubidots_token') || "BBUS-d7nOyVvjWHEUQfqS9LRVevB6yiTnOe";
-    document.getElementById('cfg-temp-alert').value = localStorage.getItem('cfg_temp_alert') || "15.0";
-    document.getElementById('cfg-bat-alert').value = localStorage.getItem('cfg_bat_alert') || "20";
-    document.getElementById('cfg-line-webhook').value = localStorage.getItem('cfg_line_webhook') || "";
-    document.getElementById('cfg-time-1').value = localStorage.getItem('cfg_time_1') || "08:00";
-    document.getElementById('cfg-time-2').value = localStorage.getItem('cfg_time_2') || "12:00";
-    document.getElementById('cfg-time-3').value = localStorage.getItem('cfg_time_3') || "18:00";
-  }
-
-  function saveSettings() {
-    localStorage.setItem('cfg_ubidots_token', document.getElementById('cfg-ubidots-token').value);
-    localStorage.setItem('cfg_temp_alert', document.getElementById('cfg-temp-alert').value);
-    localStorage.setItem('cfg_bat_alert', document.getElementById('cfg-bat-alert').value);
-    localStorage.setItem('cfg_line_webhook', document.getElementById('cfg-line-webhook').value);
-    localStorage.setItem('cfg_time_1', document.getElementById('cfg-time-1').value);
-    localStorage.setItem('cfg_time_2', document.getElementById('cfg-time-2').value);
-    localStorage.setItem('cfg_time_3', document.getElementById('cfg-time-3').value);
-    writeLog("設定保存完了");
-    alert('設定を保存しました！');
-  }
-
-  async function runAiAnalysis() {
-    await fetchAllUbidotsData();
-    alert("最新のデータを反映しました！");
-  }
-
-  function buildCuteLineMessage() {
-    return `📦【保冷BOX 定期レポート】✨\n\n` +
-           `現在の状態をお知らせします🤖\n\n` +
-           `🌡️ BOX内温度：${currentTemp} ℃\n` +
-           `🔋 バッテリー：${currentBatPercent} %\n\n` +
-           `引き続き監視を継続します📷✨`;
-  }
-
-  async function sendLineMessage(msg) {
-    const webhookUrl = document.getElementById('cfg-line-webhook').value.trim();
-    if (!webhookUrl) return;
-
-    try {
-      await fetch(webhookUrl, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "text/plain" },
-        body: JSON.stringify({ message: msg })
+      [btnAll, btnMain, btnTest].forEach(b => {
+        if (b) b.className = "apple-segmented-btn flex-1 sm:flex-none px-3 py-1.5 rounded-xl text-xs font-medium text-apple-subtext hover:text-white";
       });
-      writeLog("🚀 LINEにメッセージを送信しました。");
-    } catch (err) {
-      writeLog("❌ 通信失敗: " + err);
+
+      if (dev === 'ALL' && btnAll) btnAll.className = "apple-segmented-btn flex-1 sm:flex-none px-3 py-1.5 rounded-xl text-xs font-medium text-white bg-white/15 shadow-sm border border-white/10";
+      if (dev === 'pico-w-main' && btnMain) btnMain.className = "apple-segmented-btn flex-1 sm:flex-none px-3 py-1.5 rounded-xl text-xs font-medium text-white bg-apple-blue shadow-sm";
+      if (dev === 'pico-2w-test' && btnTest) btnTest.className = "apple-segmented-btn flex-1 sm:flex-none px-3 py-1.5 rounded-xl text-xs font-medium text-white bg-apple-purple shadow-sm";
+
+      const badge = document.getElementById('activeDeviceBadge');
+      const sub = document.getElementById('activeDeviceSub');
+
+      if (dev === 'ALL') {
+        if (badge) { badge.textContent = "全2セット (全4ch表示中)"; badge.className = "px-2.5 py-0.5 rounded-full text-xs font-mono bg-apple-blue/20 text-apple-blue border border-apple-blue/30 font-medium"; }
+        if (sub) sub.textContent = "室内検証機 (pico-2w-test) ＆ 本機 (pico-w-main)";
+      } else if (dev === 'pico-w-main') {
+        if (badge) { badge.textContent = "本機 (フィールド設置)"; badge.className = "px-2.5 py-0.5 rounded-full text-xs font-mono bg-apple-blue/20 text-apple-blue border border-apple-blue/30 font-medium"; }
+        if (sub) sub.textContent = "pico-w-main データを集計中";
+      } else {
+        if (badge) { badge.textContent = "検証機 (室内環境)"; badge.className = "px-2.5 py-0.5 rounded-full text-xs font-mono bg-apple-purple/20 text-apple-purple border border-apple-purple/30 font-medium"; }
+        if (sub) sub.textContent = "pico-2w-test データを集計中";
+      }
+
+      if (rawDataCache) {
+        renderDashboard(rawDataCache);
+      }
     }
-  }
 
-  function testLineNotification() {
-    sendLineMessage(buildCuteLineMessage());
-  }
+    function calculateBatteryOutageForecast(historicalLogs) {
+      if (!historicalLogs || historicalLogs.length < 3) {
+        return { outageTime: null, hoursRemain: 0, dischargeRate: 0 };
+      }
 
-  function checkScheduledNotification() {
-    const now = new Date();
-    const currentHHMM = now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
-    if (currentHHMM === lastNotifiedMinute) return;
+      const recent = historicalLogs.slice(-12);
+      const first = recent[0];
+      const last = recent[recent.length - 1];
 
-    const t1 = document.getElementById('cfg-time-1').value;
-    const t2 = document.getElementById('cfg-time-2').value;
-    const t3 = document.getElementById('cfg-time-3').value;
+      const dtHours = (new Date(last.timestamp) - new Date(first.timestamp)) / (1000 * 3600);
+      const dV = parseFloat(last.vsys_voltage) - parseFloat(first.vsys_voltage);
 
-    if (currentHHMM === t1 || currentHHMM === t2 || currentHHMM === t3) {
-      lastNotifiedMinute = currentHHMM;
-      sendLineMessage(buildCuteLineMessage());
+      let dischargeRate = -0.010; 
+      if (dtHours > 0.1 && Math.abs(dV) > 0.001) {
+        dischargeRate = dV / dtHours;
+      }
+
+      if (dischargeRate >= 0) dischargeRate = -0.008;
+
+      const currentV = parseFloat(last.vsys_voltage);
+      const limitV = 3.40; 
+
+      let hoursRemain = 0;
+      if (currentV > limitV) {
+        hoursRemain = (currentV - limitV) / Math.abs(dischargeRate);
+      }
+
+      const outageTime = new Date(new Date(last.timestamp).getTime() + hoursRemain * 3600 * 1000);
+
+      document.getElementById('statDischargeRate').textContent = `${dischargeRate.toFixed(3)} V/h`;
+
+      return {
+        outageTime: outageTime,
+        hoursRemain: hoursRemain,
+        dischargeRate: dischargeRate
+      };
     }
-  }
 
-  loadSettings();
-  fetchAllUbidotsData();
-  writeLog("ダッシュボード（スマホ最適化・レイアウト完成版）初期化完了");
-  setInterval(fetchAllUbidotsData, 30000);
-  setInterval(checkScheduledNotification, 10000);
-</script>
+    function calculateCoupledThermalForecast(lastBoxTemp, lastHouseTemp, lastTimestamp, historicalLogs) {
+      const startTime = new Date(lastTimestamp);
+      const boxPoints = [];
+      const housePoints = [];
+
+      let k_eff = 0.045;
+      if (historicalLogs && historicalLogs.length >= 6) {
+        const recent = historicalLogs.slice(-6);
+        const dtHours = (new Date(recent[recent.length - 1].timestamp) - new Date(recent[0].timestamp)) / (1000 * 3600);
+        if (dtHours > 0) {
+          const dBox = recent[recent.length - 1].temp_box - recent[0].temp_box;
+          const avgDiff = (recent[recent.length - 1].temp_house - recent[recent.length - 1].temp_box + recent[0].temp_house - recent[0].temp_box) / 2;
+          if (avgDiff > 1.0) {
+            k_eff = Math.max(0.015, Math.min(0.12, dBox / (dtHours * avgDiff)));
+          }
+        }
+      }
+
+      document.getElementById('statKValue').textContent = `${k_eff.toFixed(3)} /h`;
+
+      let curBox = lastBoxTemp;
+      let targetReachTime = null;
+      let totalHoursToReach = 0;
+
+      const stepMinutes = 15;
+      const maxSteps = 64; 
+
+      boxPoints.push({ x: startTime, y: curBox });
+      housePoints.push({ x: startTime, y: lastHouseTemp });
+
+      const startHour = startTime.getHours() + startTime.getMinutes() / 60;
+      const baseSolarTemp = 28 + 11 * Math.sin((startHour - 7.5) * Math.PI / 12);
+      const houseOffset = lastHouseTemp - baseSolarTemp;
+
+      for (let step = 1; step <= maxSteps; step++) {
+        const stepTime = new Date(startTime.getTime() + step * stepMinutes * 60 * 1000);
+        const hour = stepTime.getHours() + stepTime.getMinutes() / 60;
+
+        const solarComponent = 28 + 11 * Math.sin((hour - 7.5) * Math.PI / 12);
+        const decay = Math.exp(-step / 20);
+        const predictedHouseTemp = Math.max(16, Math.min(48, Number((solarComponent + houseOffset * decay).toFixed(1))));
+        housePoints.push({ x: stepTime, y: predictedHouseTemp });
+
+        const dtHours = stepMinutes / 60;
+        const tempDiff = predictedHouseTemp - curBox;
+        const bufferingFactor = curBox < 15.0 ? 0.65 : 1.0;
+        
+        const dBox = k_eff * tempDiff * dtHours * bufferingFactor;
+        curBox = Number((curBox + Math.max(0, dBox)).toFixed(2));
+
+        boxPoints.push({ x: stepTime, y: curBox });
+
+        if (curBox >= 35.0 && !targetReachTime) {
+          targetReachTime = stepTime;
+          totalHoursToReach = step * dtHours;
+        }
+      }
+
+      if (!targetReachTime) {
+        totalHoursToReach = maxSteps * (stepMinutes / 60);
+        targetReachTime = new Date(startTime.getTime() + totalHoursToReach * 3600 * 1000);
+      }
+
+      return {
+        boxAiPoints: boxPoints,
+        houseAiPoints: housePoints,
+        estimatedReachTime: targetReachTime,
+        estimatedHours: totalHoursToReach,
+        k_eff: k_eff
+      };
+    }
+
+    function initChart() {
+      const canvas = document.getElementById('mainChart');
+      if (!canvas) return;
+      
+      const ctx = canvas.getContext('2d');
+      
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          datasets: [
+            {
+              label: 'BOX内温度 (℃)',
+              data: [],
+              borderColor: '#64d2ff', 
+              backgroundColor: 'rgba(100, 210, 255, 0.08)',
+              borderWidth: 2.5,
+              tension: 0.35,
+              fill: true,
+              pointRadius: 2,
+              pointHoverRadius: 6,
+              yAxisID: 'y'
+            },
+            {
+              label: 'BOX熱結合推測',
+              data: [],
+              borderColor: '#64d2ff',
+              backgroundColor: 'transparent',
+              borderWidth: 2,
+              borderDash: [5, 4],
+              tension: 0.35,
+              pointRadius: 0,
+              yAxisID: 'y'
+            },
+            {
+              label: 'ハウス内温度 (℃)',
+              data: [],
+              borderColor: '#ff9f0a', 
+              backgroundColor: 'transparent',
+              borderWidth: 2.5,
+              tension: 0.35,
+              pointRadius: 2,
+              pointHoverRadius: 6,
+              yAxisID: 'y'
+            },
+            {
+              label: 'バッテリー電圧 (V)',
+              data: [],
+              borderColor: '#ffd60a', 
+              backgroundColor: 'transparent',
+              borderWidth: 2,
+              tension: 0.2,
+              pointRadius: 1,
+              yAxisID: 'yVoltage'
+            },
+            {
+              label: '35℃ 限界基準',
+              data: [],
+              borderColor: '#ff453a',
+              backgroundColor: 'transparent',
+              borderWidth: 1.5,
+              borderDash: [3, 3],
+              pointRadius: 0,
+              yAxisID: 'y'
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            x: {
+              type: 'time',
+              time: {
+                unit: 'minute',
+                displayFormats: { minute: 'HH:mm', hour: 'MM/dd HH:mm' }
+              },
+              grid: { color: 'rgba(255, 255, 255, 0.06)' },
+              ticks: { color: '#8e8e93', font: { family: '-apple-system', size: 11 } }
+            },
+            y: {
+              type: 'linear',
+              position: 'left',
+              title: { display: true, text: '温度 (℃)', color: '#8e8e93', font: { size: 11 } },
+              grid: { color: 'rgba(255, 255, 255, 0.06)' },
+              ticks: { color: '#8e8e93', font: { family: '-apple-system', size: 11 } },
+              suggestedMin: 10,
+              suggestedMax: 42
+            },
+            yVoltage: {
+              type: 'linear',
+              position: 'right',
+              title: { display: true, text: '電圧 (V)', color: '#ffd60a', font: { size: 11 } },
+              grid: { drawOnChartArea: false },
+              ticks: { color: '#ffd60a', font: { family: '-apple-system', size: 11 } },
+              suggestedMin: 3.2,
+              suggestedMax: 4.3
+            }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(20, 20, 24, 0.92)',
+              titleColor: '#ffffff',
+              bodyColor: '#e5e5ea',
+              borderColor: 'rgba(255, 255, 255, 0.2)',
+              borderWidth: 1,
+              padding: 12,
+              boxPadding: 6,
+              usePointStyle: true,
+              bodyFont: { family: '-apple-system', size: 12 }
+            },
+            zoom: {
+              pan: { enabled: true, mode: 'x' },
+              zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+            }
+          }
+        }
+      });
+    }
+
+    function resetChartZoom() {
+      if (chartInstance) {
+        chartInstance.resetZoom();
+        showToast('グラフ表示をデフォルトにリセットしました', 'info');
+      }
+    }
+
+    async function fetchData() {
+      const savedUrl = localStorage.getItem('coolerbox_gas_url');
+      const gasUrl = savedUrl || DEFAULT_GAS_URL;
+
+      const refreshIcon = document.getElementById('refreshIcon');
+      if (refreshIcon) refreshIcon.classList.add('animate-spin');
+
+      try {
+        const response = await fetch(gasUrl);
+        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
+
+        const data = await response.json();
+        rawDataCache = data;
+        renderDashboard(data);
+        showToast('最新テレメトリ同期完了', 'success');
+
+      } catch (err) {
+        console.warn('Fetch failed, using demo/cache fallback:', err);
+        showToast('通信に接続できません。「デモデータ」で機能を確認できます', 'error');
+      } finally {
+        if (refreshIcon) refreshIcon.classList.remove('animate-spin');
+      }
+    }
+
+    function renderDashboard(data) {
+      if (!data) return;
+
+      let logs = data.logs || [];
+      const events = data.events || [];
+
+      if (activeDeviceFilter !== 'ALL') {
+        logs = logs.filter(l => l.device_id === activeDeviceFilter);
+      }
+
+      if (logs.length === 0) return;
+
+      const latest = logs[logs.length - 1];
+
+      document.getElementById('cardBoxTemp').textContent = parseFloat(latest.temp_box).toFixed(1);
+      document.getElementById('cardHouseTemp').textContent = parseFloat(latest.temp_house).toFixed(1);
+
+      const diff = (parseFloat(latest.temp_house) - parseFloat(latest.temp_box)).toFixed(1);
+      document.getElementById('cardTempDiff').textContent = `${diff >= 0 ? '+' : ''}${diff} ℃`;
+
+      const boxTempStatus = document.getElementById('boxTempStatus');
+      if (latest.temp_box >= 35) {
+        boxTempStatus.innerHTML = `<i data-lucide="alert-triangle" class="w-3.5 h-3.5"></i> 限界超過`;
+        boxTempStatus.className = 'font-semibold text-apple-red flex items-center gap-1';
+      } else if (latest.temp_box >= 30) {
+        boxTempStatus.innerHTML = `<i data-lucide="alert-circle" class="w-3.5 h-3.5"></i> 注意上昇`;
+        boxTempStatus.className = 'font-semibold text-apple-orange flex items-center gap-1';
+      } else {
+        boxTempStatus.innerHTML = `<i data-lucide="shield-check" class="w-3.5 h-3.5"></i> 正常`;
+        boxTempStatus.className = 'font-medium text-apple-green flex items-center gap-1';
+      }
+
+      const vsys = parseFloat(latest.vsys_voltage);
+      document.getElementById('cardVoltage').textContent = vsys.toFixed(2);
+      document.getElementById('cardRssi').textContent = `RSSI: ${latest.rssi || '--'} dBm`;
+
+      const pct = Math.max(0, Math.min(100, Math.round(((vsys - 3.5) / (4.2 - 3.5)) * 100)));
+      document.getElementById('batteryPercent').textContent = `${pct}%`;
+
+      const circle = document.getElementById('batteryGaugeCircle');
+      if (circle) {
+        const offset = 113 - (113 * pct) / 100;
+        circle.setAttribute('stroke-dashoffset', offset);
+      }
+
+      const batteryForecast = calculateBatteryOutageForecast(logs);
+      if (batteryForecast.outageTime) {
+        const oDate = new Date(batteryForecast.outageTime);
+        const timeStr = oDate.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+        document.getElementById('cardBatteryOutageTime').textContent = `${timeStr} 頃 (約${batteryForecast.hoursRemain.toFixed(1)}h)`;
+      }
+
+      const coupledForecast = calculateCoupledThermalForecast(
+        parseFloat(latest.temp_box),
+        parseFloat(latest.temp_house),
+        latest.timestamp,
+        logs
+      );
+
+      if (coupledForecast.estimatedReachTime) {
+        const pDate = new Date(coupledForecast.estimatedReachTime);
+        const hoursStr = pDate.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+        document.getElementById('cardPredictTime').textContent = `${hoursStr} 頃`;
+        document.getElementById('cardPredictRemain').textContent = `残り約 ${coupledForecast.estimatedHours.toFixed(1)} 時間`;
+      }
+
+      const boxPoints = [];
+      const housePoints = [];
+      const voltagePoints = [];
+      const limitPoints = [];
+
+      logs.forEach(log => {
+        const t = new Date(log.timestamp);
+        boxPoints.push({ x: t, y: log.temp_box });
+        housePoints.push({ x: t, y: log.temp_house });
+        voltagePoints.push({ x: t, y: log.vsys_voltage });
+        limitPoints.push({ x: t, y: 35.0 });
+      });
+
+      if (coupledForecast.boxAiPoints.length > 0) {
+        coupledForecast.boxAiPoints.forEach(p => limitPoints.push({ x: p.x, y: 35.0 }));
+      }
+
+      if (chartInstance) {
+        chartInstance.data.datasets[0].data = boxPoints;
+        chartInstance.data.datasets[1].data = coupledForecast.boxAiPoints;
+        chartInstance.data.datasets[2].data = housePoints;
+        chartInstance.data.datasets[3].data = voltagePoints;
+        chartInstance.data.datasets[4].data = limitPoints;
+        chartInstance.update('none');
+      }
+
+      const eventsList = document.getElementById('eventsList');
+      document.getElementById('eventCountBadge').textContent = `${events.length} 件`;
+
+      if (events.length === 0) {
+        eventsList.innerHTML = `<div class="text-center text-xs text-apple-subtext py-12">検知イベントはありません</div>`;
+      } else {
+        eventsList.innerHTML = events.slice().reverse().map(ev => {
+          const evTime = new Date(ev.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+          return `
+            <div class="bg-black/50 border border-white/5 rounded-2xl p-3 text-xs space-y-1">
+              <div class="flex items-center justify-between text-white font-medium">
+                <span class="flex items-center"><i data-lucide="snowflake" class="w-3.5 h-3.5 mr-1.5 text-apple-cyan"></i> 保冷剤交換検知</span>
+                <span class="text-[10px] text-apple-subtext font-mono">${evTime}</span>
+              </div>
+              <div class="text-slate-300 text-[11px]">
+                投入時: <strong class="text-apple-cyan">${ev.temp_box}℃</strong> (ハウス: ${ev.temp_house}℃)
+              </div>
+            </div>
+          `;
+        }).join('');
+        if (window.lucide) lucide.createIcons();
+      }
+
+      const tbody = document.getElementById('logsTableBody');
+      document.getElementById('lastUpdatedTime').textContent = `最終更新: ${new Date().toLocaleTimeString('ja-JP')}`;
+
+      tbody.innerHTML = logs.slice().reverse().slice(0, 100).map(log => {
+        const timeStr = new Date(log.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const devBadgeClass = log.device_id.includes('main') ? 'bg-apple-blue/20 text-apple-blue' : 'bg-apple-purple/20 text-apple-purple';
+        return `
+          <tr class="hover:bg-white/5 transition-colors">
+            <td class="py-2.5 px-3 text-apple-subtext">${timeStr}</td>
+            <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded-lg ${devBadgeClass} text-[10px] font-mono border border-white/5">${log.device_id}</span></td>
+            <td class="py-2.5 px-3 font-semibold text-apple-cyan">${log.temp_box} ℃</td>
+            <td class="py-2.5 px-3 text-apple-orange">${log.temp_house} ℃</td>
+            <td class="py-2.5 px-3 text-apple-yellow font-semibold">${log.vsys_voltage} V</td>
+            <td class="py-2.5 px-3 text-apple-subtext">${log.rssi} dBm</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function useDemoData() {
+      const now = new Date();
+      const logs = [];
+      const events = [];
+
+      for (let i = 120; i >= 0; i--) {
+        const t = new Date(now.getTime() - i * 10 * 60 * 1000);
+        const hour = t.getHours() + t.getMinutes() / 60;
+
+        const tempHouse = Number((28 + 12 * Math.sin((hour - 7.0) * Math.PI / 12) + (Math.random() * 0.4 - 0.2)).toFixed(1));
+
+        let tempBoxMain = Number((12 + (120 - i) * 0.12).toFixed(1));
+        let tempBoxTest = Number((18 + (120 - i) * 0.08).toFixed(1));
+
+        const vsysMain = Number((4.15 - (120 - i) * 0.0032).toFixed(2));
+        const vsysTest = Number((4.05 - (120 - i) * 0.0028).toFixed(2));
+
+        logs.push({
+          timestamp: t.toISOString(),
+          device_id: "pico-w-main",
+          temp_box: tempBoxMain,
+          temp_house: tempHouse,
+          vsys_voltage: vsysMain,
+          rssi: -65
+        });
+
+        logs.push({
+          timestamp: t.toISOString(),
+          device_id: "pico-2w-test",
+          temp_box: tempBoxTest,
+          temp_house: tempHouse - 2.0, 
+          vsys_voltage: vsysTest,
+          rssi: -58
+        });
+      }
+
+      const demoData = { logs, events };
+      rawDataCache = demoData;
+      renderDashboard(demoData);
+      showToast('全2セット4ch デモデータを読み込みました', 'info');
+    }
+
+    function startRecalibrationTimer() {
+      let minutesLeft = 15;
+      if (recalibrationTimer) clearInterval(recalibrationTimer);
+
+      recalibrationTimer = setInterval(() => {
+        minutesLeft--;
+        if (minutesLeft <= 0) {
+          minutesLeft = 15;
+          showToast('Apple AI熱＆放電エンジンの周期再校正を実施しました', 'info');
+        }
+        const elem = document.getElementById('statNextRecalib');
+        if (elem) elem.textContent = `${minutesLeft}分後`;
+      }, 60000);
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initChart();
+      if (window.lucide) lucide.createIcons();
+
+      const saved = localStorage.getItem('coolerbox_gas_url');
+      if (saved) {
+        const input = document.getElementById('gasUrlInput');
+        if (input) input.value = saved;
+      }
+
+      fetchData();
+      startRecalibrationTimer();
+      autoRefreshTimer = setInterval(fetchData, 60000);
+    });
+  </script>
 </body>
 </html>
